@@ -134,7 +134,7 @@ def run_server_artifact(logger, config_data, config_agent):
         FlowId = modules.Velociraptor.VelociraptorScript.run_server_artifact(
             "Server.Utils.CreateCollector", logger, artifacts_dict
         )
-        time.sleep(5)
+        time.sleep(23)
 
         random_string = "".join(random.choices(string.ascii_letters, k=11))
         os.makedirs(f"Collector/{random_string}", exist_ok=True)
