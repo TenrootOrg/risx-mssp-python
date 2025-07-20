@@ -29,12 +29,22 @@ import additionals.funcs
 import modules.Velociraptor.VelociraptorScript
 import ssl
 import urllib3
+import asyncio
 
 # Disable SSL warnings globally
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Modify SSL context globally to allow unverified HTTPS connections
 ssl._create_default_https_context = ssl._create_unverified_context
+
+
+# Wrapper for run_generic_vql
+def run_generic_vql(query, logger):
+    return modules.Velociraptor.VelociraptorScript.run_generic_vql(query, logger)
+
+
+async def async_run_generic_vql(query, logger):
+    return await asyncio.to_thread(run_generic_vql, query, logger)
 
 
 def connect_my_sql(env_dict, logger):
@@ -134,8 +144,18 @@ def run_server_artifact(logger, config_data, config_agent):
         FlowId = modules.Velociraptor.VelociraptorScript.run_server_artifact(
             "Server.Utils.CreateCollector", logger, artifacts_dict
         )
-        time.sleep(23)
+        # time.sleep(23)
+        logger.info(f"Time Before {FlowId}: " + time.ctime())
+        Collector_query = f"""
+     LET _ <= SELECT * FROM watch_monitoring(artifact='System.Flow.Completion')
+                            WHERE FlowId = "{FlowId}"
+                            LIMIT 1
+"""
+        logger.info(Collector_query)
+        Collector_results = run_generic_vql(Collector_query, logger)
+        logger.info("Time after: " + time.ctime())
 
+        logger.info("This is the Collector_results: " + str(Collector_results))
         random_string = "".join(random.choices(string.ascii_letters, k=11))
         os.makedirs(f"Collector/{random_string}", exist_ok=True)
         OsCollector = ""
