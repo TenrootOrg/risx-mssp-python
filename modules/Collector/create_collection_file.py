@@ -154,6 +154,7 @@ def run_server_artifact(logger, config_data, config_agent):
         logger.info(Collector_query)
         Collector_results = run_generic_vql(Collector_query, logger)
         logger.info("Time after: " + time.ctime())
+        time.sleep(5)
 
         logger.info("This is the Collector_results: " + str(Collector_results))
         random_string = "".join(random.choices(string.ascii_letters, k=11))
