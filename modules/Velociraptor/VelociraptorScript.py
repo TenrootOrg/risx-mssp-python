@@ -13,6 +13,7 @@ import random
 
 import ssl
 import urllib3
+
 # Disable SSL warnings globally
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -26,6 +27,7 @@ import json
 import time
 import pandas as pd
 from datetime import datetime
+
 
 def get_online_clients(logger):
     """
@@ -87,9 +89,7 @@ def get_online_clients(logger):
         return {}
 
 
-
-    
-def run_generic_vql(query, logger, print_flag = True):
+def run_generic_vql(query, logger, print_flag=True):
     try:
         logger.info("Run generic vql!")
         channel = setup_connection(logger)
@@ -109,7 +109,7 @@ def run_generic_vql(query, logger, print_flag = True):
         result = []
 
         for response in stub.Query(request):
-            if(print_flag):
+            if print_flag:
                 logger.info("response:" + str(response))
 
             if response.Response:
@@ -117,8 +117,10 @@ def run_generic_vql(query, logger, print_flag = True):
                     # Try to parse the response as JSON
                     result = result + json.loads(response.Response)
                     # Fix: Use proper string formatting for logging
-                    if(print_flag):
-                        logger.info(f"run_generic_vql response.Response: {str(response.Response)}")
+                    if print_flag:
+                        logger.info(
+                            f"run_generic_vql response.Response: {str(response.Response)}"
+                        )
 
                 except json.JSONDecodeError:
                     # If JSON parsing fails, store the response as a string
@@ -130,9 +132,6 @@ def run_generic_vql(query, logger, print_flag = True):
         return result
     except Exception as e:
         logger.error("There is an Error in run_generic_vql Error: " + str(e))
-
-
-
 
 
 def run_generic_vql_monitor(query, logger):
@@ -155,40 +154,43 @@ def run_generic_vql_monitor(query, logger):
         result = []
 
         for response in stub.Query(request):
-            logger.info("respone: "+str(response) )
+            logger.info("respone: " + str(response))
 
             if response.Response:
                 try:
                     # Try to parse the response as JSON
 
-                    result =result+ json.loads(response.Response)
-                    logger.info("run_generic_vql str(response.Response) str(response.Response) ",str(response.Response) )
+                    result = result + json.loads(response.Response)
+                    logger.info(
+                        "run_generic_vql str(response.Response) str(response.Response) ",
+                        str(response.Response),
+                    )
                     return True
 
                 except json.JSONDecodeError:
                     # If JSON parsing fails, store the response as a string
                     result = str(response.Response)
-                    logger.info("run_generic_vql result result ",result )
+                    logger.info("run_generic_vql result result ", result)
                     return True
 
                 # Print the result (you can remove this in production)
                 # print(result)
-        logger.info("run_generic_vql complete " )
+        logger.info("run_generic_vql complete ")
         # logger.info("run_generic_vql complete result sssssssssssssssssssssssssssssssssssssssssssssssssssss:" + str(result) )
-
 
         return result
     except Exception as e:
         logger.error("THere is an Error in run_generic_vql Error : " + str(e))
 
-def run_server_artifact(artifact_name, logger, parameters = ""):
+
+def run_server_artifact(artifact_name, logger, parameters=""):
     logger.info("Running server artifact query.")
     query = ""
     if parameters == "":
         query = f"LET collection <= collect_client(client_id='server', artifacts='{artifact_name}') SELECT * FROM collection"
     else:
-        arguments = format_arguments_obj(parameters,logger)
-        spec = f'dict({arguments})'
+        arguments = format_arguments_obj(parameters, logger)
+        spec = f"dict({arguments})"
         query = f"SELECT collect_client(client_id='server', artifacts='{artifact_name}', spec={spec}) AS Flow FROM scope()"
         # #example that works query = f"""SELECT collect_client(client_id='server', artifacts='Server.Utils.CreateCollector', spec=dict(`Server.Utils.CreateCollector` = dict(artifacts=['Custom.Windows.DensityScout']))).request AS Flow FROM scope()"""
     try:
@@ -209,9 +211,9 @@ def run_server_artifact(artifact_name, logger, parameters = ""):
             if response.Response:
                 logger.info("Response:" + response.Response)
                 response = json.loads(str(response.Response))
-                if(parameters != ""):
+                if parameters != "":
                     return response[0]["Flow"]["flow_id"]
-                
+
             elif response.log:
                 # Query execution logs are sent in their own messages.
                 logger.info(
@@ -224,6 +226,7 @@ def run_server_artifact(artifact_name, logger, parameters = ""):
         logger.error(f"Failed to run server artifact.\nError Message: {str(e)}")
         logger.error(f"Traceback:\n{traceback.format_exc()}")
 
+
 """
 def format_arguments(arguments):
 
@@ -233,21 +236,23 @@ def format_arguments(arguments):
     return formatted_arguments
 """
 
+
 def format_arguments(arguments):
     formatted_arguments = ", ".join(
         f'{key}= "{value}"' for key, value in arguments.items()
     )
     return formatted_arguments
 
-def format_arguments_Helper(arguments,logger):
+
+def format_arguments_Helper(arguments, logger):
     logger.info(arguments)
-    formatted_arguments=""
+    formatted_arguments = ""
     logger.info(str(arguments))
     for key, value in arguments.items():
-        tmp=""
-        logger.info("this is value"+str(type(value)))
+        tmp = ""
+        logger.info("this is value" + str(type(value)))
 
-        if isinstance(value, str) :
+        if isinstance(value, str):
             logger.info("str type")
             tmp += f"`{key}` = '{value}'"
         elif isinstance(value, (int, float, complex)) and not isinstance(value, bool):
@@ -261,37 +266,38 @@ def format_arguments_Helper(arguments,logger):
             tmp += f"`{key}` = {'true' if value else 'false' }"
         elif isinstance(value, dict):
             logger.info("dict type")
-            
-            tmp1 = format_arguments_Helper(value,logger)
+
+            tmp1 = format_arguments_Helper(value, logger)
             tmp += f"`{key}` = dict({tmp1})"
         else:
             logger.info("Unknown type")
-            tmp="Unknown Type"
-        if(formatted_arguments==""):
+            tmp = "Unknown Type"
+        if formatted_arguments == "":
             formatted_arguments += tmp
         else:
-            formatted_arguments += ", "+tmp 
+            formatted_arguments += ", " + tmp
 
-    
     return formatted_arguments
 
-def format_arguments_obj(arguments,logger):
+
+def format_arguments_obj(arguments, logger):
     # Loop through keys and values
-    formatted_arguments=""
+    formatted_arguments = ""
     for key, value in arguments.items():
-        if(isinstance(value, dict)):
-            dictoman=format_arguments_Helper(value,logger)
-            if(formatted_arguments==""):
+        if isinstance(value, dict):
+            dictoman = format_arguments_Helper(value, logger)
+            if formatted_arguments == "":
                 formatted_arguments += f"`{key}` = dict({dictoman})"
             else:
-                formatted_arguments += ", "+f"`{key}` = dict({dictoman})"
+                formatted_arguments += ", " + f"`{key}` = dict({dictoman})"
         else:
-            if(formatted_arguments==""):
+            if formatted_arguments == "":
                 formatted_arguments += f"`{key}` = {value}"
             else:
-                formatted_arguments += ", "+f"`{key}` = {value}"    
-                
+                formatted_arguments += ", " + f"`{key}` = {value}"
+
     return formatted_arguments
+
 
 def get_clients(logger, onlineFlag):
     try:
@@ -305,20 +311,29 @@ def get_clients(logger, onlineFlag):
         if json_data_string:
             data = json.loads(json_data_string)
             if not onlineFlag:
-                    host_client_id_dict = {
-                        entry["os_info"]["hostname"]: entry["client_id"] for entry in data
-                    }
-                    return host_client_id_dict
+                host_client_id_dict = {
+                    **{
+                        entry["os_info"]["hostname"]: entry["client_id"]
+                        for entry in data
+                    },
+                    **{entry["os_info"]["fqdn"]: entry["client_id"] for entry in data},
+                }
+                return host_client_id_dict
             else:
-                    host_client_id_dict = {
-                        entry["client_id"]: [entry["last_seen_at"], entry["os_info"]["fqdn"]] for entry in data
-                    }
-                    return host_client_id_dict
+                host_client_id_dict = {
+                    entry["client_id"]: [
+                        entry["last_seen_at"],
+                        entry["os_info"]["fqdn"],
+                    ]
+                    for entry in data
+                }
+                return host_client_id_dict
         else:
             logger.error("Failed to get clients.")
             return {}
     except Exception as e:
         logger.error("Velo get_client failed:" + str(e))
+
 
 def get_hunt_state(stub, client_id, flow_id):
     query = f"LET collection <= get_flow(client_id='{client_id}', flow_id='{flow_id}') SELECT * FROM collection"
@@ -402,6 +417,7 @@ def create_modules_macro_json(submodule_name, df, file_path, logger):
         with open(macro_output_filename, "w") as file:
             file.write(seralize_macro_df)
 
+
 """
 def run_hunt(query, connection, stub, logger):
     try:
@@ -434,6 +450,7 @@ import traceback
 from pyvelociraptor import api_pb2
 from pyvelociraptor import api_pb2_grpc
 
+
 def run_hunt(query, connection, stub, logger):
     """
     Creates a new hunt in Velociraptor and returns its ID.
@@ -452,16 +469,16 @@ def run_hunt(query, connection, stub, logger):
     """
     try:
         logger.info(f"Sending VQL to start hunt: {query}")
-        
+
         request = api_pb2.VQLCollectorArgs(Query=[api_pb2.VQLRequest(VQL=query)])
-        
+
         hunt_id = None
-        
+
         # --- TIMEOUT INCREASED ---
         # The timeout has been increased to 120 seconds (2 minutes) to give a slow
         # or busy server more time to respond to the hunt creation request.
-        timeout_seconds = 120 
-        
+        timeout_seconds = 120
+
         # Iterate over the streaming response from the server
         for response in stub.Query(request, timeout=timeout_seconds):
             # Log any messages from the server's query execution
@@ -471,7 +488,7 @@ def run_hunt(query, connection, stub, logger):
             # Process the main payload if it exists
             if response.Response:
                 logger.debug(f"Received raw response payload: {response.Response}")
-                
+
                 try:
                     # The response is a JSON string, sometimes wrapped in a list
                     parsed_json = json.loads(response.Response)
@@ -480,29 +497,35 @@ def run_hunt(query, connection, stub, logger):
                     if isinstance(parsed_json, list) and len(parsed_json) > 0:
                         # The first item in the list should be our result object
                         result_obj = parsed_json[0]
-                        
+
                         # Check if the object is a dictionary and has the HuntId
                         if isinstance(result_obj, dict) and "HuntId" in result_obj:
                             hunt_id = result_obj["HuntId"]
                             logger.info(f"Successfully created Hunt. HuntId: {hunt_id}")
                             # We found the ID, so we can stop processing responses
-                            break 
-                            
+                            break
+
                 except (json.JSONDecodeError, KeyError, IndexError) as e:
-                    logger.warning(f"Could not parse HuntId from response. Payload: '{response.Response}'. Error: {e}")
-                    continue # Move to the next response message
+                    logger.warning(
+                        f"Could not parse HuntId from response. Payload: '{response.Response}'. Error: {e}"
+                    )
+                    continue  # Move to the next response message
 
         # After checking all responses, determine the final status
         if hunt_id:
             return hunt_id, "Hunting", ""
         else:
-            logger.error("Failed to create hunt. No HuntId was returned by the server within the timeout period.")
+            logger.error(
+                "Failed to create hunt. No HuntId was returned by the server within the timeout period."
+            )
             return "", "Failed", "No HuntId returned from server."
 
     except grpc.RpcError as e:
         # Handle specific gRPC errors like timeouts
         if e.code() == grpc.StatusCode.DEADLINE_EXCEEDED:
-            logger.error(f"The gRPC call timed out after {timeout_seconds} seconds. The Velociraptor server is not responding or is too slow.")
+            logger.error(
+                f"The gRPC call timed out after {timeout_seconds} seconds. The Velociraptor server is not responding or is too slow."
+            )
             return "", "Failed", "gRPC call timed out."
         else:
             logger.error(f"An RPC error occurred: {e.details()}")
@@ -562,7 +585,7 @@ def run_artifact(row, logger):
                 # arguments = format_arguments()
                 spec = f"dict(`{module}`=dict())"
                 print("BestPractice module:" + module)
-                #query = f"LET collection = hunt(description='API Hunt:{module}',artifacts='{module}', spec={spec}, expires=now() + {expire_time}) SELECT HuntId FROM collection"
+                # query = f"LET collection = hunt(description='API Hunt:{module}',artifacts='{module}', spec={spec}, expires=now() + {expire_time}) SELECT HuntId FROM collection"
                 query = f"LET collection = hunt(description='API Hunt:{module}', artifacts='{module}', spec={spec}, expires=now() + {expire_time}, timeout={max_execution_time}, max_rows={max_rows}, max_bytes={max_bytes_uploaded}, cpu_limit={cpu_limit}) SELECT HuntId FROM collection"
                 channel = setup_connection(logger)
                 stub = api_pb2_grpc.APIStub(channel)
@@ -591,7 +614,7 @@ def run_artifact(row, logger):
             row["UniqueID"], row["Status"], row["Error"] = run_hunt(
                 query, channel, stub, logger
             )
-            loger.info("row:" + str(row))
+            logger.info("row:" + str(row))
         channel.close()
         return row
 
@@ -854,7 +877,9 @@ def setup_connection(logger):
 
         # Establish the secure channel
         try:
-            channel = grpc.secure_channel(config["api_connection_string"], creds, options)
+            channel = grpc.secure_channel(
+                config["api_connection_string"], creds, options
+            )
             logger.info("Secure channel established")
             return channel
             # Perform operations with the channel here

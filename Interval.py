@@ -1130,7 +1130,7 @@ async def run_velociraptor_alerts(time_interval, elasticIP):
                 modules.Velociraptor.VelociraptorScript.get_clients(logger, False)
             )
             with open(
-                os.path.join("response_folder", "velociraptor_clients.json"), "w"
+                os.path.join("response_folder", "velociraptor_clients.json"), "w" 
             ) as f:
                 json.dump(velociraptor_client_dict, f)
             logger.info("Loading clients dictionary!")

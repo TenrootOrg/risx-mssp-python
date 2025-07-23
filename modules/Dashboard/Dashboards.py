@@ -199,16 +199,17 @@ def get_velociraptor_data(config_data, logger):
         velociraptor_dict = {}
 
         velociraptor_dict["NumberOfClients"] = len(clients_data)
+        logger.info("sssssssssssssssssssssssssssssss"+str(clients_data) + str((current_timestamp - 300)))
         velociraptor_dict["NumberOfConnectedClients"] = sum(
-            1 for client in clients_data if int(client['last_seen_at']) // 1_000 > (current_timestamp - 300)
+            1 for client in clients_data if int(client['last_seen_at']) // 1_000_000   > (current_timestamp - 300)
         )  # Convert last_seen_at to seconds
 
         velociraptor_dict["RecentHosts"] = [
             {
                 "Hostname": client['os_info']['hostname'],
-                "LastSeen": int(client['last_seen_at']) // 1_000  # Convert last_seen_at to seconds
+                "LastSeen": int(client['last_seen_at']) // 1_000_000    # Convert last_seen_at to seconds
             }
-            for client in clients_data if int(client['last_seen_at']) // 1_000 > (current_timestamp - 86400)
+            for client in clients_data if int(client['last_seen_at']) // 1_000_000 > (current_timestamp - 86400)
         ]  # Last 24 hours
 
         velociraptor_dict["NewUsers"] = [
@@ -307,24 +308,30 @@ def get_timelines(config_data, logger):
         # Get the number of sketches
         sketches = list(api.list_sketches())
         num_sketches = len(sketches)
+        logger.info("num_sketches : "+str(num_sketches))
+        logger.info("sketches : "+str(sketches))
+
 
         # Iterate over each sketch to count tags
         for sketch in sketches:
-            for timeline in sketch.list_timelines():
-                # Create a search object for the timeline
-                search_obj = search.Search(sketch=sketch)
-                search_obj.query_string = '*'
-                search_obj.return_fields = 'tag'
-                search_obj.max_entries = 10000
-                
-                # Execute the search and convert results to a DataFrame
-                search_results = search_obj.table
-                
-                if 'tag' in search_results.columns:
-                    unique_tags = search_results['tag'].explode().unique()  # Handle tags as lists
-                    for tag in unique_tags:
-                        if tag in tag_counts:
-                            tag_counts[tag] += 1
+            # for timeline in sketch.list_timelines():
+            # Create a search object for the timeline
+            search_obj = search.Search(sketch=sketch)
+            search_obj.query_string = '*'
+            search_obj.return_fields = 'tag'
+            search_obj.max_entries = 10000
+            
+            # Execute the search and convert results to a DataFrame
+            search_results = search_obj.table
+            
+            if 'tag' in search_results.columns:
+                unique_tags = search_results['tag'].explode().dropna()  # Handle tags as lists
+                logger.info("timesketch tags "+str(unique_tags))
+                for tag in unique_tags:
+                    logger.info("oooooooooooooooooo : "+ str(config_data['General']['IntervalConfigurations']['DashBoardsConfiguration']['TimeSketchIgnoreTagsList']))                     # if tag in tag_counts:
+                    logger.info("tag : "+tag)                     # if tag in tag_counts:
+                    if tag not in config_data['General']['IntervalConfigurations']['DashBoardsConfiguration']['TimeSketchIgnoreTagsList']:
+                        tag_counts[tag] = tag_counts.get(tag, 0) + 1
 
         return {
             "number_of_sketches": num_sketches,
@@ -334,10 +341,10 @@ def get_timelines(config_data, logger):
         logger.error(f"Error occurred while fetching data from Timesketch: {e}")
         return None
   tag_counts = {
-      "high": 0,
-      "Persistence": 0,
-      "phishy-domain": 0,
-      "command and control": 0
+    #   "high": 0,
+    #   "Persistence": 0,
+    #   "phishy-domain": 0,
+    #   "command and control": 0
   }
   timesketch_data = []
   timesketch_api = modules.Velociraptor.AddToTimeSketch.connect_timesketch_api(config_data, logger)
@@ -346,7 +353,8 @@ def get_timelines(config_data, logger):
       if timesketch_data:
           print(f"Number of Sketches: {timesketch_data['number_of_sketches']}")
           for tag, count in timesketch_data['tag_counts'].items():
-              print(f"Tag '{tag}': {count}")
+              
+              logger.info(f"Tag '{tag}': {count}")
   else:
     logger.warning("TimeSketch API key is empty")
     return ""
