@@ -241,7 +241,7 @@ def run_server_artifact(logger, config_data, config_agent):
                 {OsCollector} -- --embedded_config {config_data["Configuration"]["CollectorFileName"]}        
                 
                  :: Find the most recent file matching the pattern
-                 for /f "delims=" %%F in ('dir /b /od "%folderPath%\{config_data["Configuration"]["OutputsFileName"]}-r___r-*"') do set "latestFile=%%F"
+                 for /f "delims=" %%F in ('dir /b /od "%folderPath%\{config_data["Configuration"]["OutputsFileName"]}-r___r-*.zip"') do set "latestFile=%%F"
 
                  :: Validate that a file was found
                  if not defined latestFile (
@@ -272,7 +272,7 @@ def run_server_artifact(logger, config_data, config_agent):
                 folderPath=$(pwd)
                 {OsCollector} -- --embedded_config {config_data["Configuration"]["CollectorFileName"]}
                 :: Find the most recent file matching the pattern
-                latestFile=$(ls -t "$folderPath"/{config_data["Configuration"]["OutputsFileName"]}-r___r-* 2>/dev/null | head -n 1)
+                latestFile=$(ls -t "$folderPath"/{config_data["Configuration"]["OutputsFileName"]}-r___r-*.zip 2>/dev/null | head -n 1)
 
                 # Validate that a file was found
                 if [ -z "$latestFile" ]; then
@@ -296,7 +296,7 @@ def run_server_artifact(logger, config_data, config_agent):
                 folderPath=$(pwd)
                 {OsCollector} -- --embedded_config {config_data["Configuration"]["CollectorFileName"]}
                 :: Find the most recent file matching the pattern
-                latestFile=$(ls -t "$folderPath"/{config_data["Configuration"]["OutputsFileName"]}-r___r-* 2>/dev/null | head -n 1)
+                latestFile=$(ls -t "$folderPath"/{config_data["Configuration"]["OutputsFileName"]}-r___r-*.zip 2>/dev/null | head -n 1)
 
                 :: Validate that a file was found
                 if [ -z "$latestFile" ]; then
