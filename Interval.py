@@ -432,25 +432,25 @@ async def run_updates_daily(time_interval):
             modules_updates_config = config_data.get("General", {}).get("IntervalConfigurations", {}).get("ModulesUpdates", {})
             time_to_sleep_hours = modules_updates_config.get("TimeIntervalInHours", 24)
             artifact_list = modules_updates_config.get("UpdateVelociraptorModules", [])
-        
+                    
             if not artifact_list:
                 logger.info("No artifacts scheduled for update in this cycle.")
             else:
-                logger.info(f"Starting {len(artifact_list)} artifact updates concurrently: {artifact_list}")
+                logger.info(f"Starting {len(artifact_list)} artifact updates sequentially: {artifact_list}")
 
-                # --- THIS IS THE FIX ---
-                # 1. Prepare a list of all the tasks (coroutines) to run.
-                tasks = [
-                    async_run_server_artifact(artifact_name, logger)
-                    for artifact_name in artifact_list
-                ]
-
-                # 2. asyncio.gather runs all tasks concurrently.
-                # The 'await' here is crucial. It pauses this function
-                # until ALL the background tasks in the list have completed.
-                # This prevents the 'finally' block from running too early.
-                if tasks:
-                    await asyncio.gather(*tasks)
+                # Run tasks one by one with 7-second delay between them
+                for i, artifact_name in enumerate(artifact_list):
+                    logger.info(f"Starting artifact update {i+1}/{len(artifact_list)}: {artifact_name}")
+                    
+                    # Run the task and wait for it to complete
+                    await async_run_server_artifact(artifact_name, logger)
+                    
+                    logger.info(f"Completed artifact update: {artifact_name}")
+                    
+                    # Add 7-second delay before next task (but not after the last one)
+                    if i < len(artifact_list) - 1:
+                        logger.info("Waiting 7 seconds before next update...")
+                        await asyncio.sleep(7)
                 
                 logger.info("All artifact update tasks for this cycle have finished.")
 
