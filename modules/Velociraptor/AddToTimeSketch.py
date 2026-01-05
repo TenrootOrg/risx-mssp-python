@@ -62,15 +62,90 @@ def is_plaso_running(logger):
         logger.error(f"Failed to run docker ps command: {e.stderr}")
         return False
 
-def run_kape_artifact(stub, client_id, kape_collection, timeout, cpu_limit,  logger):
-    flow_id = ""
-    artifact_name =  'Windows.KapeFiles.Targets'
-    max_bytes = "9000000000000000"
-    #query = f"LET collection <= collect_client(client_id='{client_id}', artifacts='Windows.KapeFiles.Targets', timeout=60000, env=dict(Device='C:', VSSAnalysis='Y', {kape_collection}='Y'))SELECT * FROM collection"
-    query = f"LET collection <= collect_client(client_id='{client_id}', artifacts='Windows.KapeFiles.Targets', timeout={timeout}, cpu_limit={cpu_limit}, max_bytes={max_bytes}, env=dict(Device='C:', VSSAnalysis='Y', {kape_collection}='Y')) SELECT * FROM collection"
+def _format_vql_parameters(params):
+    """Format parameters dictionary for VQL - matches Velociraptor 0.75 format"""
+    import json
+    parts = []
+    for key, value in params.items():
+        if isinstance(value, str):
+            parts.append(f"`{key}`='{value}'")
+        elif isinstance(value, bool):
+            parts.append(f"`{key}`={'true' if value else 'false'}")
+        elif isinstance(value, (int, float)):
+            parts.append(f"`{key}`={value}")
+        elif isinstance(value, list):
+            # Format as JSON string so Velociraptor can parse it as array
+            # The artifact's VQL uses parse_json_array() to handle this
+            parts.append(f"`{key}`='{json.dumps(value)}'")
+    return ", ".join(parts)
 
-    logger.info("Running KAPE artifact query.")
+
+def run_kape_artifact(stub, client_id, kape_collection, timeout, cpu_limit,  logger):
+    """Run KAPE/Triage artifact on client using Velociraptor 0.75 format
+
+    Args:
+        stub: Velociraptor gRPC stub
+        client_id: Target client ID
+        kape_collection: KAPE target(s) - string or list (e.g., "_SANS_Triage" or ["_J", "_BasicCollection"])
+        timeout: Timeout in milliseconds
+        cpu_limit: CPU limit percentage
+        logger: Logger instance
+
+    Returns:
+        flow_id string or empty string on failure
+    """
+    flow_id = ""
+    artifact_name = 'Windows.Triage.Targets'
+    max_bytes = "9000000000000000"
+
+    # Convert kape_collection to list format for Velociraptor 0.75
+    if isinstance(kape_collection, list):
+        targets_list = kape_collection
+    elif isinstance(kape_collection, str):
+        targets_list = [kape_collection]
+    else:
+        targets_list = ["_SANS_Triage"]  # Default
+
+    # Normalize targets - ensure underscore prefix for collection targets
+    normalized_targets = []
+    for target in targets_list:
+        if target.startswith('_'):
+            normalized_targets.append(target)
+        elif target in ['BasicCollection', 'KapeTriage', 'SANS_Triage', 'J', 'Live']:
+            normalized_targets.append(f'_{target}')
+        else:
+            # Non-collection targets like "!Password", "AVG" don't need underscore
+            normalized_targets.append(target)
+
+    # Build parameters dict
+    # Note: Parameter names must match the artifact definition exactly (case-sensitive!)
+    params = {
+        "Targets": normalized_targets,           # List of KAPE targets to collect
+        "Devices": ["C:"],                       # json_array of devices to search (note: plural!)
+        "VSS_MAX_AGE_DAYS": 0,                  # VSS analysis (0=disabled, >0=days back)
+        "WORKERS": 5,                            # Number of concurrent workers (default: 5)
+        "SlowGlobRegex": "^\\*\\*",             # Regex to eliminate slow globs (default from Triage artifact)
+    }
+
+    # Format parameters for VQL
+    params_str = _format_vql_parameters(params)
+
+    # Build VQL with spec=dict() format (Velociraptor 0.75)
+    query = f"""
+SELECT collect_client(
+    client_id='{client_id}',
+    artifacts='{artifact_name}',
+    spec=dict(`{artifact_name}`=dict({params_str})),
+    timeout={timeout},
+    cpu_limit={cpu_limit},
+    max_bytes={max_bytes}
+) AS Flow FROM scope()
+"""
+
+    logger.info("Running KAPE artifact query (Velociraptor 0.75 format).")
+    logger.info("KAPE Targets: " + str(normalized_targets))
     logger.info("Query:" + query)
+
     request = api_pb2.VQLCollectorArgs(
         max_wait=10,
         max_row=100,
@@ -79,18 +154,19 @@ def run_kape_artifact(stub, client_id, kape_collection, timeout, cpu_limit,  log
             VQL=query,
         )]
     )
+
     for response in stub.Query(request):
         if response.Response:
-            
-            #print("Response:" + response.Response)
             logger.info("Response:" + str(response))
-            response = json.loads(str(response.Response))
-            flow_id = response[0]["flow_id"]
+            response_data = json.loads(str(response.Response))
 
-        #elif response.log:
-            # Query execution logs are sent in their own messages.
-            #print ("%s: %s" % (time.ctime(response.timestamp / 1000000), response.log))
-    if(flow_id != ""):
+            # Velociraptor 0.75 returns nested structure: response[0]["Flow"]["flow_id"]
+            if response_data and len(response_data) > 0:
+                flow_obj = response_data[0].get("Flow", {})
+                if isinstance(flow_obj, dict):
+                    flow_id = flow_obj.get("flow_id", "")
+
+    if flow_id != "":
         logger.info("Flow id:" + str(flow_id))
         return flow_id
     logger.error("Failed to run KAPE artifact.")
@@ -159,19 +235,30 @@ def run_artifact_on_client(channel, client_id, kape_collection, timeout, cpu_lim
     start_time = time.time()
     #timeout = 9999999999  # Run loop for 30 seconds
     state = ""
+    check_count = 0
     while True:
+        check_count += 1
         state = get_flow_state(stub, client_id, flow_id, timeout, logger)
+        elapsed = int(time.time() - start_time)
+
         if state == "FINISHED":
-            logger.info("Artifact is done!")
+            logger.info(f"Artifact is done! (Check #{check_count}, Elapsed: {elapsed}s)")
+            # Wait a bit more to ensure uploads are fully flushed to disk
+            logger.info("Waiting 10 seconds to ensure all uploads are flushed...")
+            time.sleep(10)
             return flow_id
         if state == "FAILED":
             logger.error("The flow has been failed!")
             return
 
-        # Check if 30 seconds have passed
+        # Check if timeout reached
         if time.time() - start_time > timeout:
             logger.warning("Timeout reached. Exiting the loop.")
             break
+
+        # Log progress and wait before next check
+        logger.info(f"Check #{check_count}: Flow state: {state}, Elapsed: {elapsed}s")
+        time.sleep(10)  # Wait 10 seconds before checking again
     return
 
 def get_command2(config, api, row, host_name, user_name, client_name, logger):
@@ -199,14 +286,16 @@ def get_command2(config, api, row, host_name, user_name, client_name, logger):
         PathToPlaso = f"/home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso/{client_name}Artifacts.plaso"
 
     # Add a check for sketch_id and construct command
+    # TimeSketch is accessible at root path https://{ip}/ (not /timesketch subpath due to known subpath issues)
+    # SSL verification is disabled via .timesketchrc config file (verify = False)
     if sketch_id is not None:
         logger.info(f"Sketch with the same name found. Sketchid: {sketch_id}")
         row["UniqueID"] = {"SketchID": sketch_id, "TimelineID": timeline_name}
-        return row, f"{timesketch_importer_path} -u {username} -p {password} --host http://{ip}:5666 --timeline_name {timeline_name} --sketch_id {sketch_id} {PathToPlaso} --quick"
+        return row, f'{timesketch_importer_path} -u {username} -p {password} --host https://{ip}/ --timeline_name {timeline_name} --sketch_id {sketch_id} {PathToPlaso} --quick'
     else:
         logger.info(f"Sketch with the same name not found. Creating new Sketch: {sketch_name}")
         row["UniqueID"] = {"SketchID": sketch_name, "TimelineID": timeline_name}
-        return row, f"{timesketch_importer_path} -u {username} -p {password} --host http://{ip}:5666 --timeline_name {timeline_name} --sketch_name {sketch_name} {PathToPlaso} --quick"
+        return row, f'{timesketch_importer_path} -u {username} -p {password} --host https://{ip}/ --timeline_name {timeline_name} --sketch_name {sketch_name} {PathToPlaso} --quick'
 
 
 def get_sketch_id(api, sketch_name, logger):
@@ -320,8 +409,13 @@ def start_timesketch(row, general_config, logger):
                         ram = additionals.funcs.closest_memory_percentage(int(row['Arguments']['MemoryThrottling'])) + "g"
                         logger.info("Number of CPUs:" + cpus)
                         logger.info("Number of Memory:" + ram)
- 
-                        command1 = f"sudo docker run -v /home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso/:/data -v /home/tenroot/setup_platform/workdir/velociraptor/velociraptor:/velociraptor --cpus='{cpus}' --memory='{ram}' log2timeline/plaso log2timeline --workers {cpus} --status_view window --status_view_interval 60 --storage-file /data/{client_name}Artifacts.plaso /velociraptor/clients/{client_id}/collections/{flow_id}/uploads"
+
+                        # Uploads directory path inside Velociraptor container
+                        uploads_path = f"/velociraptor/clients/{client_id}/collections/{flow_id}/uploads"
+                        logger.info(f"Using uploads directory: {uploads_path}")
+
+                        # Use --volumes-from to share volumes from Velociraptor container (same as reference implementation)
+                        command1 = f"sudo docker run --rm --volumes-from velociraptor -v /home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso/:/data --cpus='{cpus}' --memory='{ram}' --user root log2timeline/plaso log2timeline --workers {cpus} --status_view window --status_view_interval 60 --storage-file /data/{client_name}Artifacts.plaso {uploads_path}"
                         api = connect_timesketch_api(general_config, logger)
                         #Check if there existing sketch or not
                         row, command2 = get_command2(general_config, api, row, host_name, user_name, client_name, logger)
@@ -333,6 +427,20 @@ def start_timesketch(row, general_config, logger):
                         additionals.funcs.run_subprocess(f"sudo rm -f /home/node/.timesketch.token", "", logger)
                         additionals.funcs.run_subprocess(f"sudo rm -f /home/node/.timesketchrc", "", logger)
                         additionals.funcs.run_subprocess(f"sudo rm -f /data/{client_name}Artifacts.plaso", "", logger)
+
+                        # Create .timesketchrc with SSL verification disabled for self-signed certificates
+                        logger.info("Creating .timesketchrc config with SSL verification disabled")
+                        timesketch_config = f"""[timesketch]
+host_uri = https://{general_config['ClientData']['API']['Timesketch']['IP']}/
+username = {general_config['ClientData']['API']['Timesketch']['Username']}
+auth_mode = userpass
+verify = False
+"""
+                        config_path = "/home/node/.timesketchrc"
+                        with open(config_path, 'w') as f:
+                            f.write(timesketch_config)
+                        logger.info(f"Created {config_path} with verify=False (using root path)")
+
                         logger.info("Running plaso!")
                         # Return after loading file
                         additionals.funcs.run_subprocess(command1,"Processing completed", logger)

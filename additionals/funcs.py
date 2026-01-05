@@ -205,6 +205,9 @@ def fill_assets_per_module(config_data, existing_modules, current_datetime, logg
 
         # Loop over each asset in the ClientInfrastructure
         assets = config_data.get("ClientInfrastructure", {}).get("Assets", {})
+        # Handle case where Assets might be None
+        if assets is None:
+            assets = {}
         for asset_id, asset in assets.items():
             asset_enable = asset.get("AssetEnable")
             asset_string = asset.get("AssetString")

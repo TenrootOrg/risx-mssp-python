@@ -47,6 +47,57 @@ async def async_run_generic_vql(query, logger):
     return await asyncio.to_thread(run_generic_vql, query, logger)
 
 
+def transform_kape_parameters(parameters):
+    """Transform old KAPE boolean format to Velociraptor 0.75 Triage.Targets format
+
+    Velociraptor 0.75 changed KAPE parameters:
+    1. Individual boolean flags → Targets list
+    2. Parameter name changes: Device → Devices, VSSAnalysis → VSS_MAX_AGE_DAYS
+
+    OLD: {_KapeTriage: true, _J: true, Device: 'C:', VSSAnalysis: 'Y'}
+    NEW: {Targets: ['_KapeTriage', '_J'], Devices: ['C:'], VSS_MAX_AGE_DAYS: 0}
+
+    Args:
+        parameters: Dictionary of KAPE parameters in old or new format
+
+    Returns:
+        Dictionary with Targets list format and updated parameter names
+    """
+    # If already has Targets parameter and new parameter names, return as-is
+    if 'Targets' in parameters and 'Devices' in parameters:
+        return parameters
+
+    targets = []
+    other_params = {}
+
+    for key, value in parameters.items():
+        # Check if this is a KAPE target (starts with underscore or is a known target name)
+        if key.startswith('_') or key in ['BasicCollection', 'KapeTriage', 'SANS_Triage', 'J', 'Live']:
+            if value:  # If true/enabled
+                # Ensure underscore prefix for collection targets
+                target_name = key if key.startswith('_') else f'_{key}'
+                targets.append(target_name)
+        # Transform old parameter names to new ones
+        elif key == 'Device':
+            # Device (string) → Devices (array)
+            other_params['Devices'] = [value] if isinstance(value, str) else value
+        elif key == 'VSSAnalysis':
+            # VSSAnalysis ('Y'/'N') → VSS_MAX_AGE_DAYS (int, 0=disabled)
+            other_params['VSS_MAX_AGE_DAYS'] = 0
+        else:
+            # Keep other parameters as-is
+            other_params[key] = value
+
+    # Add targets list if any were found
+    if targets:
+        other_params['Targets'] = targets
+    elif 'Targets' not in other_params:
+        # Default to _SANS_Triage if no targets specified
+        other_params['Targets'] = ['_SANS_Triage']
+
+    return other_params
+
+
 def connect_my_sql(env_dict, logger):
     connection = additionals.mysql_functions.setup_mysql_connection(env_dict, logger)
     tmpId = "Empty"
@@ -119,7 +170,15 @@ def run_server_artifact(logger, config_data, config_agent):
         artifactsParmObj = {}
         for obj in config_data["Artifacts"]:
             if obj.get("parameters"):  # Non-empty dicts evaluate to True
-                artifactsParmObj[obj["name"]] = obj["parameters"]
+                # Transform KAPE/Triage parameters for Velociraptor 0.75 compatibility
+                if obj["name"] in ["Windows.KapeFiles.Targets", "Windows.Triage.Targets"]:
+                    logger.info(f"Transforming {obj['name']} parameters for Velociraptor 0.75")
+                    logger.info(f"Old parameters: {obj['parameters']}")
+                    transformed_params = transform_kape_parameters(obj["parameters"])
+                    logger.info(f"New parameters: {transformed_params}")
+                    artifactsParmObj[obj["name"]] = transformed_params
+                else:
+                    artifactsParmObj[obj["name"]] = obj["parameters"]
             artifactsListArr.append(obj["name"])
         artifacts_dict["Server.Utils.CreateCollector"]["OS"] = "Generic"
         artifacts_dict["Server.Utils.CreateCollector"]["opt_collector_filename"] = (
