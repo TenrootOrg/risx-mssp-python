@@ -433,12 +433,20 @@ SELECT create_flow_download(
                                 logger.info(f"Export response: {response.Response}")
                                 export_data = json.loads(response.Response)
                                 if export_data and len(export_data) > 0:
-                                    export_info = export_data[0].get('Export', {})
-                                    export_path = export_info.get('path', '')
+                                    export_info = export_data[0].get('Export', '')
+                                    # Export can be a string path or a dict with 'path' key
+                                    if isinstance(export_info, str):
+                                        export_path = export_info
+                                    elif isinstance(export_info, dict):
+                                        export_path = export_info.get('path', '')
 
                         if not export_path:
                             logger.error("Failed to export collection as ZIP")
                             raise Exception("Collection export failed")
+
+                        # Remove fs: prefix if present
+                        if export_path.startswith('fs:'):
+                            export_path = export_path[3:]
 
                         logger.info(f"Collection exported to: {export_path}")
 
@@ -690,12 +698,20 @@ SELECT create_flow_download(
                                             logger.info(f"Export response: {response.Response}")
                                             export_data = json.loads(response.Response)
                                             if export_data and len(export_data) > 0:
-                                                export_info = export_data[0].get('Export', {})
-                                                export_path = export_info.get('path', '')
+                                                export_info = export_data[0].get('Export', '')
+                                                # Export can be a string path or a dict with 'path' key
+                                                if isinstance(export_info, str):
+                                                    export_path = export_info
+                                                elif isinstance(export_info, dict):
+                                                    export_path = export_info.get('path', '')
 
                                     if not export_path:
                                         logger.error("Failed to export collection as ZIP")
                                         raise Exception("Collection export failed")
+
+                                    # Remove fs: prefix if present
+                                    if export_path.startswith('fs:'):
+                                        export_path = export_path[3:]
 
                                     logger.info(f"Collection exported to: {export_path}")
 
