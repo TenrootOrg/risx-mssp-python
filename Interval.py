@@ -408,6 +408,111 @@ async def log_processes():
         await asyncio.sleep(5 * 60)
 
 
+async def download_velociraptor_tools(logger):
+    """
+    Downloads all Velociraptor tools and sets them to serve_locally=TRUE.
+    This enables offline collector functionality in air-gapped environments.
+
+    Process:
+    1. Run Server.Internal.ToolDependencies to ensure Velociraptor binaries are configured
+    2. Download all artifact tools that don't have files in the filestore
+    """
+    try:
+        # Step 1: Ensure Velociraptor collector binaries are configured by running ToolDependencies
+        logger.info("Running Server.Internal.ToolDependencies to configure Velociraptor binaries...")
+        try:
+            await async_run_server_artifact("Server.Internal.ToolDependencies", logger)
+            logger.info("Server.Internal.ToolDependencies completed successfully")
+            await asyncio.sleep(5)  # Wait for tool definitions to be processed
+        except Exception as tool_dep_error:
+            logger.warning(f"Server.Internal.ToolDependencies failed (may already be configured): {str(tool_dep_error)}")
+
+        # Step 2: Get list of all tools with their filestore status
+        # We check serve_url to determine if the tool is already downloaded
+        # serve_url is only set when the file is actually available locally
+        # Note: We don't filter by admin_override - we want to download all tools
+        # that don't have a local serve_url, including manually configured ones
+        inventory_query = """
+        SELECT name, url, serve_locally, filename, filestore_path, hash, serve_url
+        FROM inventory()
+        WHERE url
+          AND NOT url =~ '^todo'
+        """
+
+        tools = await async_run_generic_vql(inventory_query, logger)
+        logger.info(f"Found {len(tools)} tools in inventory")
+
+        tools_downloaded = 0
+        tools_skipped = 0
+        tools_failed = 0
+
+        for tool in tools:
+            tool_name = tool.get('name', 'Unknown')
+            url = tool.get('url', '')
+            serve_url = tool.get('serve_url', '')
+
+            # Skip tools with invalid URLs
+            if not url or url.startswith('todo'):
+                logger.debug(f"Tool '{tool_name}' has no valid URL, skipping")
+                tools_skipped += 1
+                continue
+
+            # Check if tool is already downloaded locally
+            # When downloaded locally, serve_url contains '/public/' (local filestore path)
+            # When not downloaded, serve_url equals the original url (external URL)
+            # Also verify the file actually exists in filestore (filestore_path should have content)
+            filestore_path = tool.get('filestore_path', '')
+            tool_hash = tool.get('hash', '')
+            if serve_url and '/public/' in serve_url and filestore_path and tool_hash:
+                logger.debug(f"Tool '{tool_name}' already available locally at {serve_url}, skipping")
+                tools_skipped += 1
+                continue
+
+            try:
+                # Download tool using http_client and register with inventory_add
+                # This downloads the file from URL and adds it to the filestore for local serving
+                logger.info(f"Downloading tool: {tool_name} from {url[:60]}...")
+                download_query = f"""
+                LET download <= SELECT Content FROM http_client(
+                    url="{url}",
+                    tempfile_extension=".tmp"
+                )
+                SELECT inventory_add(
+                    tool="{tool_name}",
+                    file=download[0].Content,
+                    serve_locally=TRUE
+                ) AS result
+                FROM scope()
+                """
+                result = await async_run_generic_vql(download_query, logger)
+
+                if result and result[0].get('result'):
+                    result_data = result[0].get('result', {})
+                    serve_url = result_data.get('serve_url', '')
+                    if serve_url:
+                        logger.info(f"Successfully downloaded tool: {tool_name} -> {serve_url}")
+                    else:
+                        logger.info(f"Successfully configured tool: {tool_name}")
+                    tools_downloaded += 1
+                else:
+                    logger.warning(f"No result returned for tool download: {tool_name}")
+                    tools_failed += 1
+
+                # Small delay between downloads to avoid overwhelming the server
+                await asyncio.sleep(2)
+
+            except Exception as tool_error:
+                logger.error(f"Failed to download tool '{tool_name}': {str(tool_error)}")
+                tools_failed += 1
+                continue
+
+        logger.info(f"Tool download complete: {tools_downloaded} downloaded, {tools_skipped} skipped, {tools_failed} failed")
+
+    except Exception as e:
+        logger.error(f"Error in download_velociraptor_tools: {str(e)}")
+        logger.error(f"Traceback:\n{traceback.format_exc()}")
+
+
 async def run_updates_daily(time_interval):
     """
     Runs scheduled tasks in a continuous loop. This version uses asyncio.gather
@@ -453,6 +558,10 @@ async def run_updates_daily(time_interval):
                         await asyncio.sleep(7)
                 
                 logger.info("All artifact update tasks for this cycle have finished.")
+
+            # Download all Velociraptor tools for air-gapped systems
+            logger.info("Starting Velociraptor tools download for offline collector support...")
+            await download_velociraptor_tools(logger)
 
         except Exception as e:
             logger.error(f"An error occurred in the daily update cycle: {str(e)}")
