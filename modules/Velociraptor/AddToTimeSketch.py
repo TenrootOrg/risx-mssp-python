@@ -463,9 +463,10 @@ SELECT create_flow_download(
                         additionals.funcs.run_subprocess(f"sudo mkdir -p {extract_dir}", "", logger)
 
                         # Copy ZIP from velociraptor container and extract
-                        # Use host path for docker cp since it runs via docker daemon
+                        # Note: docker cp from inside container writes to container's filesystem view
+                        # so use container path (/tmp/...) not host path
                         additionals.funcs.run_subprocess(
-                            f"sudo docker cp velociraptor:{zip_path} {host_extract_dir}/collection.zip",
+                            f"sudo docker cp velociraptor:{zip_path} {extract_dir}/collection.zip",
                             "", logger
                         )
                         additionals.funcs.run_subprocess(
@@ -732,9 +733,10 @@ SELECT create_flow_download(
                                     additionals.funcs.run_subprocess(f"sudo mkdir -p {extract_dir}", "", logger)
 
                                     # Copy ZIP from velociraptor container and extract
-                                    # Use host path for docker cp since it runs via docker daemon
+                                    # Note: docker cp from inside container writes to container's filesystem view
+                                    # so use container path (/tmp/...) not host path
                                     additionals.funcs.run_subprocess(
-                                        f"sudo docker cp velociraptor:{zip_path} {host_extract_dir}/collection.zip",
+                                        f"sudo docker cp velociraptor:{zip_path} {extract_dir}/collection.zip",
                                         "", logger
                                     )
                                     additionals.funcs.run_subprocess(
