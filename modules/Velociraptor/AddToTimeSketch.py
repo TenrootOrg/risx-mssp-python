@@ -451,7 +451,10 @@ SELECT create_flow_download(
                         logger.info(f"Collection exported to: {export_path}")
 
                         # Extract ZIP to temp directory for plaso
+                        # Note: Container's /tmp maps to /home/tenroot/setup_platform/workdir/tmp on host
+                        # Docker commands need host paths for volume mounts
                         extract_dir = f"/tmp/plaso_extract_{client_name}_{flow_id}"
+                        host_extract_dir = f"/home/tenroot/setup_platform/workdir/tmp/plaso_extract_{client_name}_{flow_id}"
                         zip_path = f"/velociraptor{export_path}"
 
                         # Extract using unzip inside velociraptor container, then copy to host
@@ -460,8 +463,9 @@ SELECT create_flow_download(
                         additionals.funcs.run_subprocess(f"sudo mkdir -p {extract_dir}", "", logger)
 
                         # Copy ZIP from velociraptor container and extract
+                        # Use host path for docker cp since it runs via docker daemon
                         additionals.funcs.run_subprocess(
-                            f"sudo docker cp velociraptor:{zip_path} {extract_dir}/collection.zip",
+                            f"sudo docker cp velociraptor:{zip_path} {host_extract_dir}/collection.zip",
                             "", logger
                         )
                         additionals.funcs.run_subprocess(
@@ -470,10 +474,10 @@ SELECT create_flow_download(
                         )
 
                         # Run plaso on extracted directory
-                        uploads_path = f"{extract_dir}"
-                        logger.info(f"Using extracted directory for plaso: {uploads_path}")
+                        # Use host path for docker volume mount
+                        logger.info(f"Using extracted directory for plaso: {host_extract_dir}")
 
-                        command1 = f"sudo docker run --rm -v {extract_dir}:{extract_dir}:ro -v /home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso/:/data --cpus='{cpus}' --memory='{ram}' --user root log2timeline/plaso log2timeline --workers {cpus} --status_view window --status_view_interval 60 --storage-file /data/{client_name}Artifacts.plaso {uploads_path}"
+                        command1 = f"sudo docker run --rm -v {host_extract_dir}:{host_extract_dir}:ro -v /home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso/:/data --cpus='{cpus}' --memory='{ram}' --user root log2timeline/plaso log2timeline --workers {cpus} --status_view window --status_view_interval 60 --storage-file /data/{client_name}Artifacts.plaso {host_extract_dir}"
                         api = connect_timesketch_api(general_config, logger)
                         #Check if there existing sketch or not
                         row, command2 = get_command2(general_config, api, row, host_name, user_name, client_name, logger)
@@ -716,7 +720,10 @@ SELECT create_flow_download(
                                     logger.info(f"Collection exported to: {export_path}")
 
                                     # Extract ZIP to temp directory for plaso
+                                    # Note: Container's /tmp maps to /home/tenroot/setup_platform/workdir/tmp on host
+                                    # Docker commands need host paths for volume mounts
                                     extract_dir = f"/tmp/plaso_extract_{client_name}_{flow_id}"
+                                    host_extract_dir = f"/home/tenroot/setup_platform/workdir/tmp/plaso_extract_{client_name}_{flow_id}"
                                     zip_path = f"/velociraptor{export_path}"
 
                                     # Extract using unzip inside velociraptor container, then copy to host
@@ -725,8 +732,9 @@ SELECT create_flow_download(
                                     additionals.funcs.run_subprocess(f"sudo mkdir -p {extract_dir}", "", logger)
 
                                     # Copy ZIP from velociraptor container and extract
+                                    # Use host path for docker cp since it runs via docker daemon
                                     additionals.funcs.run_subprocess(
-                                        f"sudo docker cp velociraptor:{zip_path} {extract_dir}/collection.zip",
+                                        f"sudo docker cp velociraptor:{zip_path} {host_extract_dir}/collection.zip",
                                         "", logger
                                     )
                                     additionals.funcs.run_subprocess(
@@ -735,10 +743,10 @@ SELECT create_flow_download(
                                     )
 
                                     # Run plaso on extracted directory
-                                    uploads_path = f"{extract_dir}"
-                                    logger.info(f"Using extracted directory for plaso: {uploads_path}")
+                                    # Use host path for docker volume mount
+                                    logger.info(f"Using extracted directory for plaso: {host_extract_dir}")
 
-                                    command1 = f"sudo docker run --rm -v {extract_dir}:{extract_dir}:ro -v /home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso/:/data --cpus='{cpus}' --memory='{ram}' --user root log2timeline/plaso log2timeline --workers {cpus} --status_view window --status_view_interval 60 --storage-file /data/{client_name}Artifacts.plaso {uploads_path}"
+                                    command1 = f"sudo docker run --rm -v {host_extract_dir}:{host_extract_dir}:ro -v /home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso/:/data --cpus='{cpus}' --memory='{ram}' --user root log2timeline/plaso log2timeline --workers {cpus} --status_view window --status_view_interval 60 --storage-file /data/{client_name}Artifacts.plaso {host_extract_dir}"
 
                                     # Connect to Timesketch API
                                     api = connect_timesketch_api(general_config, logger)
