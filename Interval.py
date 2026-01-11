@@ -408,6 +408,47 @@ async def log_processes():
         await asyncio.sleep(5 * 60)
 
 
+async def download_plaso_image(logger):
+    """
+    Downloads the log2timeline/plaso Docker image for offline/air-gapped environments.
+    This image is required for timeline processing in Timesketch integration.
+    """
+    import subprocess as sp
+    try:
+        logger.info("Checking if log2timeline/plaso Docker image exists...")
+
+        # Check if image already exists
+        check_result = await asyncio.to_thread(
+            lambda: sp.run(
+                ["sudo", "docker", "images", "log2timeline/plaso", "--format", "{{.Repository}}:{{.Tag}}"],
+                capture_output=True, text=True
+            )
+        )
+
+        if check_result.stdout and 'log2timeline/plaso' in check_result.stdout:
+            logger.info("log2timeline/plaso image already exists locally, skipping download")
+            return True
+
+        logger.info("Pulling log2timeline/plaso:latest Docker image (this may take a while)...")
+
+        # Pull the image using the existing run_subprocess which handles logging
+        await asyncio.to_thread(
+            lambda: additionals.funcs.run_subprocess(
+                "sudo docker pull log2timeline/plaso:latest",
+                "Downloaded newer image",
+                logger
+            )
+        )
+
+        logger.info("log2timeline/plaso Docker image downloaded successfully")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to download log2timeline/plaso image: {str(e)}")
+        logger.error(f"Traceback:\n{traceback.format_exc()}")
+        return False
+
+
 async def download_velociraptor_tools(logger):
     """
     Downloads all Velociraptor tools and sets them to serve_locally=TRUE.
@@ -562,6 +603,10 @@ async def run_updates_daily(time_interval):
             # Download all Velociraptor tools for air-gapped systems
             logger.info("Starting Velociraptor tools download for offline collector support...")
             await download_velociraptor_tools(logger)
+
+            # Download log2timeline/plaso Docker image for Timesketch integration
+            logger.info("Starting plaso Docker image download for timeline processing...")
+            await download_plaso_image(logger)
 
         except Exception as e:
             logger.error(f"An error occurred in the daily update cycle: {str(e)}")

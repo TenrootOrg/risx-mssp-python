@@ -528,8 +528,15 @@ verify = False
                         logger.info("TimeLine ID:" + row["UniqueID"]["TimelineID"])
                         if(row["UniqueID"]["SketchID"] == row["Arguments"]["SketchName"]):
                             row["UniqueID"]["SketchID"] = get_sketch_id(api, row["Arguments"]["SketchName"], logger)
-                        row["UniqueID"]["TimelineID"] = get_timeline_id(api, row["UniqueID"]["SketchID"], row["UniqueID"]["TimelineID"], logger)
-                        logger.info(row["UniqueID"]["TimelineID"])
+
+                        # Only fetch timeline ID if we have a valid sketch ID
+                        if row["UniqueID"]["SketchID"] is not None:
+                            row["UniqueID"]["TimelineID"] = get_timeline_id(api, row["UniqueID"]["SketchID"], row["UniqueID"]["TimelineID"], logger)
+                            logger.info(row["UniqueID"]["TimelineID"])
+                        else:
+                            logger.warning(f"Could not get sketch ID for '{row['Arguments']['SketchName']}' - sketch may not exist yet or timesketch_importer is still processing")
+                            # Timeline was imported with --sketch_name, so it should exist once timesketch finishes processing
+                            logger.info("Timeline import was initiated - check Timesketch UI for status")
                         #make_sketches_public(api, logger)
                         api.session.close()
                 except Exception as e:
@@ -798,8 +805,14 @@ verify = False
                                     logger.info("TimeLine ID:" + row["UniqueID"]["TimelineID"])
                                     if row["UniqueID"]["SketchID"] == row["Arguments"]["SketchName"]:
                                         row["UniqueID"]["SketchID"] = get_sketch_id(api, row["Arguments"]["SketchName"], logger)
-                                    row["UniqueID"]["TimelineID"] = get_timeline_id(api, row["UniqueID"]["SketchID"], row["UniqueID"]["TimelineID"], logger)
-                                    logger.info(row["UniqueID"]["TimelineID"])
+
+                                    # Only fetch timeline ID if we have a valid sketch ID
+                                    if row["UniqueID"]["SketchID"] is not None:
+                                        row["UniqueID"]["TimelineID"] = get_timeline_id(api, row["UniqueID"]["SketchID"], row["UniqueID"]["TimelineID"], logger)
+                                        logger.info(row["UniqueID"]["TimelineID"])
+                                    else:
+                                        logger.warning(f"Could not get sketch ID for '{row['Arguments']['SketchName']}' - sketch may not exist yet or timesketch_importer is still processing")
+                                        logger.info("Timeline import was initiated - check Timesketch UI for status")
                                     api.session.close()
 
                                     collection_results.append({
