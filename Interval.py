@@ -408,6 +408,50 @@ async def log_processes():
         await asyncio.sleep(5 * 60)
 
 
+async def ensure_timesketch_dependencies(logger):
+    """
+    Ensures Timesketch container has required Python dependencies installed.
+    This includes google-generativeai for LLM features.
+    Runs during daily updates to ensure dependencies persist across container restarts.
+    """
+    import subprocess as sp
+    try:
+        logger.info("Ensuring Timesketch dependencies are installed...")
+
+        # Check if timesketch-web container is running
+        check_container = await asyncio.to_thread(
+            lambda: sp.run(
+                ["docker", "ps", "--filter", "name=timesketch-web", "--format", "{{.Names}}"],
+                capture_output=True, text=True
+            )
+        )
+
+        if not check_container.stdout or 'timesketch-web' not in check_container.stdout:
+            logger.warning("timesketch-web container is not running, skipping dependency check")
+            return False
+
+        # Install google-generativeai for LLM features
+        logger.info("Installing google-generativeai in timesketch-web container...")
+        install_result = await asyncio.to_thread(
+            lambda: sp.run(
+                ["docker", "exec", "timesketch-web", "pip3", "install", "google-generativeai"],
+                capture_output=True, text=True
+            )
+        )
+
+        if install_result.returncode == 0:
+            logger.info("Timesketch dependencies installed successfully")
+            return True
+        else:
+            logger.warning(f"Failed to install dependencies: {install_result.stderr}")
+            return False
+
+    except Exception as e:
+        logger.error(f"Failed to ensure Timesketch dependencies: {str(e)}")
+        logger.error(f"Traceback:\n{traceback.format_exc()}")
+        return False
+
+
 async def download_plaso_image(logger):
     """
     Downloads the log2timeline/plaso Docker image for offline/air-gapped environments.
@@ -607,6 +651,10 @@ async def run_updates_daily(time_interval):
             # Download log2timeline/plaso Docker image for Timesketch integration
             logger.info("Starting plaso Docker image download for timeline processing...")
             await download_plaso_image(logger)
+
+            # Ensure Timesketch has required Python dependencies (google-generativeai for LLM)
+            logger.info("Ensuring Timesketch dependencies are installed...")
+            await ensure_timesketch_dependencies(logger)
 
         except Exception as e:
             logger.error(f"An error occurred in the daily update cycle: {str(e)}")
