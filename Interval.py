@@ -421,7 +421,7 @@ async def ensure_timesketch_dependencies(logger):
         # Check if timesketch-web container is running
         check_container = await asyncio.to_thread(
             lambda: sp.run(
-                ["docker", "ps", "--filter", "name=timesketch-web", "--format", "{{.Names}}"],
+                ["sudo", "docker", "ps", "--filter", "name=timesketch-web", "--format", "{{.Names}}"],
                 capture_output=True, text=True
             )
         )
@@ -434,7 +434,7 @@ async def ensure_timesketch_dependencies(logger):
         logger.info("Installing google-generativeai in timesketch-web container...")
         install_result = await asyncio.to_thread(
             lambda: sp.run(
-                ["docker", "exec", "timesketch-web", "pip3", "install", "google-generativeai"],
+                ["sudo", "docker", "exec", "timesketch-web", "pip3", "install", "google-generativeai"],
                 capture_output=True, text=True
             )
         )
