@@ -570,8 +570,13 @@ async def download_velociraptor_tools(logger):
                 # Extract filename from URL for proper metadata
                 filename = url.split('/')[-1] if '/' in url else tool_name
 
+                # Try to extract version from URL (common patterns like v1.2.3, 1.2.3, etc)
+                import re
+                version_match = re.search(r'[/v_-](\d+\.\d+(?:\.\d+)?)', url)
+                version = version_match.group(1) if version_match else "latest"
+
                 # Download tool using http_client and register with inventory_add
-                # Include url and filename so offline collector knows file type (zip vs exe)
+                # Include url, filename, and version so offline collector has proper metadata
                 logger.info(f"Downloading tool: {tool_name} from {url[:60]}...")
                 download_query = f"""
                 LET download <= SELECT Content FROM http_client(
@@ -582,6 +587,7 @@ async def download_velociraptor_tools(logger):
                     tool="{tool_name}",
                     url="{url}",
                     filename="{filename}",
+                    version="{version}",
                     file=download[0].Content,
                     serve_locally=TRUE
                 ) AS result
