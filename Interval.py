@@ -557,13 +557,12 @@ async def download_velociraptor_tools(logger):
             serve_url = inv_tool.get('serve_url', '')
             filestore_path = inv_tool.get('filestore_path', '')
             tool_hash = inv_tool.get('hash', '')
-            tool_version = inv_tool.get('version', '')
 
-            # Check if tool is already downloaded locally with proper metadata
-            # Requires: serve_url with /public/, filestore_path, hash, AND version
-            # If version is missing, re-download to get proper metadata
-            if serve_url and '/public/' in serve_url and filestore_path and tool_hash and tool_version:
-                logger.debug(f"Tool '{tool_name}' already available locally with version {tool_version}, skipping")
+            # Check if tool is already downloaded locally
+            # When downloaded locally, serve_url contains '/public/' (local filestore path)
+            # and filestore_path + hash should be set
+            if serve_url and '/public/' in serve_url and filestore_path and tool_hash:
+                logger.debug(f"Tool '{tool_name}' already available locally, skipping")
                 tools_skipped += 1
                 continue
 

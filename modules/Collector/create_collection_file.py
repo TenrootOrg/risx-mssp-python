@@ -196,7 +196,7 @@ def download_required_tools(logger, artifacts_list):
         for tool_name, artifact_url in required_tools.items():
             # Check inventory for current download status
             check_query = f"""
-            SELECT name, serve_locally, serve_url, filestore_path, version
+            SELECT name, serve_locally, serve_url, filestore_path
             FROM inventory()
             WHERE name = '{tool_name}'
             """
@@ -207,11 +207,10 @@ def download_required_tools(logger, artifacts_list):
                 serve_locally = tool.get('serve_locally', False)
                 serve_url = tool.get('serve_url', '')
                 filestore_path = tool.get('filestore_path', '')
-                version = tool.get('version', '')
 
-                # Skip if already served locally with valid filestore AND version
-                if serve_locally and '/public/' in str(serve_url) and filestore_path and version:
-                    logger.info(f"Tool '{tool_name}' already available locally with version {version}, skipping")
+                # Skip if already served locally with valid filestore
+                if serve_locally and '/public/' in str(serve_url) and filestore_path:
+                    logger.info(f"Tool '{tool_name}' already available locally, skipping")
                     continue
 
             # Use URL from artifact definition (not from inventory)
