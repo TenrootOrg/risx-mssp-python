@@ -169,52 +169,58 @@ def download_required_tools(logger, artifacts_list):
     logger.info(f"Checking tools required for artifacts: {artifacts_list}")
 
     try:
-        # Get all tools required by the selected artifacts (with name AND url from artifact definitions)
+        # Get all tools required by the selected artifacts (with name and optional url)
         artifacts_json = json.dumps(artifacts_list)
         tools_query = f"""
         LET artifact_names <= {artifacts_json}
         SELECT * FROM foreach(
             row={{SELECT tools FROM artifact_definitions(deps=TRUE, names=artifact_names) WHERE tools}},
             query={{SELECT * FROM foreach(row=tools, query={{
-                SELECT name, url FROM scope() WHERE name AND url AND NOT url =~ '^todo'
+                SELECT name, url FROM scope() WHERE name
             }})}}
         ) GROUP BY name
         """
         tools_result = run_generic_vql(tools_query, logger)
 
-        # Build map of tool name -> url from artifact definitions (authoritative source)
+        # Build map of tool name -> url from artifact definitions
         required_tools = {}
         for tool in tools_result:
             name = tool.get('name', '')
             url = tool.get('url', '')
-            if name and url and not url.startswith('todo'):
-                required_tools[name] = url
+            if name:
+                # Store URL (may be empty, will check inventory later)
+                required_tools[name] = url if url and not url.startswith('todo') else None
 
         logger.info(f"Found {len(required_tools)} required tools: {list(required_tools.keys())}")
 
         # Check which tools need to be downloaded
         for tool_name, artifact_url in required_tools.items():
-            # Check inventory for current download status
+            # Check inventory for current download status and URL
             check_query = f"""
-            SELECT name, serve_locally, serve_url, filestore_path
+            SELECT name, url, serve_locally, serve_url, filestore_path
             FROM inventory()
             WHERE name = '{tool_name}'
             """
             tool_info = run_generic_vql(check_query, logger)
 
+            inventory_url = None
             if tool_info:
                 tool = tool_info[0]
                 serve_locally = tool.get('serve_locally', False)
                 serve_url = tool.get('serve_url', '')
                 filestore_path = tool.get('filestore_path', '')
+                inventory_url = tool.get('url', '')
 
                 # Skip if already served locally with valid filestore
                 if serve_locally and '/public/' in str(serve_url) and filestore_path:
                     logger.info(f"Tool '{tool_name}' already available locally, skipping")
                     continue
 
-            # Use URL from artifact definition (not from inventory)
-            url = artifact_url
+            # Use URL from artifact definition first, fall back to inventory
+            url = artifact_url or inventory_url
+            if not url or url.startswith('todo'):
+                logger.warning(f"Tool '{tool_name}' has no valid URL in artifact or inventory, skipping")
+                continue
 
             # Extract filename and version from URL for proper metadata
             filename = url.split('/')[-1] if '/' in url else tool_name
