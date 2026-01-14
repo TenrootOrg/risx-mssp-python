@@ -504,7 +504,7 @@ async def download_velociraptor_tools(logger):
     3. Check inventory to see which tools need downloading
     4. Download missing tools and set serve_locally=TRUE
     """
-    # Bestpractice artifacts that require tools
+    # Bestpractice artifacts that require tools (must match seed_for_OnPremiseVeloConfig.js)
     bestpractice_artifacts = [
         "Generic.Forensic.SQLiteHunter",
         "Windows.Analysis.EvidenceOfDownload",
@@ -512,9 +512,9 @@ async def download_velociraptor_tools(logger):
         "Windows.Forensics.Usn",
         "Windows.Network.NetstatEnriched",
         "Windows.Nirsoft.LastActivityView",
-        "Custom.Windows.System.Powershell",
+        "Custom.Windows.System.Powershell.PSReadline.QuickWins",
         "Windows.Forensics.Lnk",
-        "Exchange.PSList.VTLookup.Server",
+        "Exchange.PSList.VTLookup.ServerMetaData",
         "Generic.System.Pstree",
         "Windows.System.UntrustedBinaries",
         "Windows.Detection.Yara.Process",
@@ -522,27 +522,25 @@ async def download_velociraptor_tools(logger):
         "Windows.Attack.UnexpectedImagePath",
         "Windows.Sys.AllUsers",
         "Windows.Registry.Sysinternals.Eulacheck",
-        "DetectRaptor.Generic.Detection.HiddenFilesDirectory",
-        "DetectRaptor.Generic.Detection.Webshells",
-        "DetectRaptor.Windows.Detection.Applications.Chrome.History",
-        "DetectRaptor.Windows.Detection.Applications.Edge.History",
-        "DetectRaptor.Windows.Detection.Applications.Firefox.History",
-        "DetectRaptor.Windows.Detection.Evtx.Bootup",
-        "DetectRaptor.Windows.Detection.Evtx.NamedPipes",
-        "DetectRaptor.Windows.Detection.Evtx.PersistenceSniper",
-        "DetectRaptor.Windows.Detection.Evtx.ProcessCreation",
-        "DetectRaptor.Windows.Detection.Evtx.RDP",
-        "DetectRaptor.Windows.Detection.Evtx.ServiceCreation",
-        "DetectRaptor.Windows.Detection.Evtx.TaskScheduler",
-        "DetectRaptor.Windows.Detection.Evtx.WindowsDefender",
+        "DetectRaptor.Generic.Detection.YaraFile",  # Has FileYaraWindows, FileYaraLinux, FileYaraMacOS
+        "DetectRaptor.Generic.Detection.YaraWebshell",
+        "DetectRaptor.Windows.Detection.Amcache",
+        "DetectRaptor.Windows.Detection.Applications",
+        "DetectRaptor.Windows.Detection.BinaryRename",
+        "DetectRaptor.Windows.Detection.Bootloaders",
+        "DetectRaptor.Windows.Detection.Evtx",
         "DetectRaptor.Windows.Detection.HijackLibsEnv",
         "DetectRaptor.Windows.Detection.HijackLibsMFT",
+        "DetectRaptor.Windows.Detection.LolDriversMalicious",
+        "DetectRaptor.Windows.Detection.LolDriversVulnerable",
         "DetectRaptor.Windows.Detection.MFT",
+        "DetectRaptor.Windows.Detection.MFT.Erasing.Tools",
         "DetectRaptor.Windows.Detection.NamedPipes",
-        "DetectRaptor.Windows.Detection.Webshells",
-        "Exchange.Windows.HardeningKitty",
-        "Windows.EventLogs.Hayabusa",
-        "Windows.Forensics.PersistenceSniper",
+        "DetectRaptor.Windows.Detection.Powershell.ISEAutoSave",
+        "DetectRaptor.Windows.Detection.Powershell.PSReadline",
+        "DetectRaptor.Windows.Detection.Webhistory",
+        "DetectRaptor.Windows.Detection.YaraProcessWin",
+        "DetectRaptor.Windows.Detection.ZoneIdentifier",
     ]
 
     try:
