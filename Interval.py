@@ -541,6 +541,10 @@ async def download_velociraptor_tools(logger):
         "DetectRaptor.Windows.Detection.Webhistory",
         "DetectRaptor.Windows.Detection.YaraProcessWin",
         "DetectRaptor.Windows.Detection.ZoneIdentifier",
+        # Additional artifacts with tools (not in seed but needed for tool download)
+        "Exchange.Windows.HardeningKitty",
+        "Windows.EventLogs.Hayabusa",
+        "Windows.Forensics.PersistenceSniper",
     ]
 
     try:
