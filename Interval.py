@@ -556,7 +556,7 @@ async def download_velociraptor_tools(logger):
         # This is the authoritative source for tool URLs (inventory can have empty URLs)
         artifacts_json = json.dumps(bestpractice_artifacts)
         artifact_tools_query = f"""
-        LET artifact_names <= {artifacts_json}
+        LET artifact_names <= parse_json_array(data='{artifacts_json}')
         SELECT * FROM foreach(
             row={{SELECT tools FROM artifact_definitions(deps=TRUE, names=artifact_names) WHERE tools}},
             query={{SELECT * FROM foreach(row=tools, query={{

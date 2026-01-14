@@ -172,7 +172,7 @@ def download_required_tools(logger, artifacts_list):
         # Get all tools required by the selected artifacts (with name, url, and version)
         artifacts_json = json.dumps(artifacts_list)
         tools_query = f"""
-        LET artifact_names <= {artifacts_json}
+        LET artifact_names <= parse_json_array(data='{artifacts_json}')
         SELECT * FROM foreach(
             row={{SELECT tools FROM artifact_definitions(deps=TRUE, names=artifact_names) WHERE tools}},
             query={{SELECT * FROM foreach(row=tools, query={{
