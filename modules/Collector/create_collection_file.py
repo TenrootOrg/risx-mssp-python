@@ -170,30 +170,31 @@ def download_required_tools(logger, artifacts_list):
 
     try:
         # Get all tools required by the selected artifacts (with name, url, and version)
-        artifacts_json = json.dumps(artifacts_list)
-        tools_query = f"""
-        LET artifact_names <= parse_json_array(data='{artifacts_json}')
-        SELECT * FROM foreach(
-            row={{SELECT tools FROM artifact_definitions(deps=TRUE, names=artifact_names) WHERE tools}},
-            query={{SELECT * FROM foreach(row=tools, query={{
-                SELECT name, url, version FROM scope() WHERE name
-            }})}}
-        ) GROUP BY name
-        """
-        tools_result = run_generic_vql(tools_query, logger)
-
-        # Build map of tool name -> {url, version} from artifact definitions
+        # Query each artifact individually to get its tools
         required_tools = {}
-        for tool in tools_result:
-            name = tool.get('name', '')
-            url = tool.get('url', '')
-            version = tool.get('version', '')
-            if name:
-                # Store URL and version (may be empty, will check inventory later)
-                required_tools[name] = {
-                    'url': url if url and not url.startswith('todo') else None,
-                    'version': version if version else 'latest'
-                }
+        for artifact_name in artifacts_list:
+            tools_query = f"""
+            SELECT * FROM foreach(
+                row={{SELECT tools FROM artifact_definitions(deps=TRUE, names=["{artifact_name}"]) WHERE tools}},
+                query={{SELECT * FROM foreach(row=tools, query={{
+                    SELECT name, url, version FROM scope() WHERE name
+                }})}}
+            )
+            """
+            try:
+                tools_result = run_generic_vql(tools_query, logger)
+                for tool in tools_result:
+                    name = tool.get('name', '')
+                    url = tool.get('url', '')
+                    version = tool.get('version', '')
+                    if name:
+                        required_tools[name] = {
+                            'url': url if url and not url.startswith('todo') else None,
+                            'version': version if version else 'latest'
+                        }
+            except Exception as e:
+                logger.debug(f"No tools found for artifact {artifact_name}: {e}")
+                continue
 
         logger.info(f"Found {len(required_tools)} required tools: {list(required_tools.keys())}")
 

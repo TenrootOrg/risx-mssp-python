@@ -540,6 +540,9 @@ async def download_velociraptor_tools(logger):
         "DetectRaptor.Windows.Detection.MFT",
         "DetectRaptor.Windows.Detection.NamedPipes",
         "DetectRaptor.Windows.Detection.Webshells",
+        "Exchange.Windows.HardeningKitty",
+        "Windows.EventLogs.Hayabusa",
+        "Windows.Forensics.PersistenceSniper",
     ]
 
     try:
@@ -552,30 +555,31 @@ async def download_velociraptor_tools(logger):
         except Exception as tool_dep_error:
             logger.warning(f"Server.Internal.ToolDependencies failed (may already be configured): {str(tool_dep_error)}")
 
-        # Step 2: Get tools only from bestpractice artifact definitions
-        # This is the authoritative source for tool URLs (inventory can have empty URLs)
-        artifacts_json = json.dumps(bestpractice_artifacts)
-        artifact_tools_query = f"""
-        LET artifact_names <= parse_json_array(data='{artifacts_json}')
-        SELECT * FROM foreach(
-            row={{SELECT tools FROM artifact_definitions(deps=TRUE, names=artifact_names) WHERE tools}},
-            query={{SELECT * FROM foreach(row=tools, query={{
-                SELECT name, url, version FROM scope() WHERE url AND NOT url =~ '^todo'
-            }})}}
-        ) GROUP BY name
-        """
-
-        artifact_tools = await async_run_generic_vql(artifact_tools_query, logger)
-        logger.info(f"Found {len(artifact_tools)} tools defined in artifacts")
-
-        # Build a map of tool name -> {url, version} from artifact definitions
+        # Step 2: Get tools from bestpractice artifact definitions
+        # Query each artifact individually to get its tools
         tool_urls = {}
-        for tool in artifact_tools:
-            name = tool.get('name', '')
-            url = tool.get('url', '')
-            version = tool.get('version', '')
-            if name and url and not url.startswith('todo'):
-                tool_urls[name] = {'url': url, 'version': version if version else 'latest'}
+        for artifact_name in bestpractice_artifacts:
+            artifact_tools_query = f"""
+            SELECT * FROM foreach(
+                row={{SELECT tools FROM artifact_definitions(deps=TRUE, names=["{artifact_name}"]) WHERE tools}},
+                query={{SELECT * FROM foreach(row=tools, query={{
+                    SELECT name, url, version FROM scope() WHERE url AND NOT url =~ '^todo'
+                }})}}
+            )
+            """
+            try:
+                artifact_tools = await async_run_generic_vql(artifact_tools_query, logger)
+                for tool in artifact_tools:
+                    name = tool.get('name', '')
+                    url = tool.get('url', '')
+                    version = tool.get('version', '')
+                    if name and url and not url.startswith('todo'):
+                        tool_urls[name] = {'url': url, 'version': version if version else 'latest'}
+            except Exception as e:
+                logger.debug(f"No tools found for artifact {artifact_name}: {e}")
+                continue
+
+        logger.info(f"Found {len(tool_urls)} tools defined in bestpractice artifacts")
 
         # Step 3: Get current inventory status to check what's already downloaded
         inventory_query = """
