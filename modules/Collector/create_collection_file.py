@@ -216,6 +216,12 @@ def download_required_tools(logger, artifacts_list):
                 logger.warning(f"Tool '{tool_name}' has no valid URL, skipping")
                 continue
 
+            # Extract filename and version from URL for proper metadata
+            filename = url.split('/')[-1] if '/' in url else tool_name
+            import re
+            version_match = re.search(r'[/v_-](\d+\.\d+(?:\.\d+)?)', url)
+            version = version_match.group(1) if version_match else "latest"
+
             # Download the tool
             logger.info(f"Downloading tool: {tool_name} from {url[:60]}...")
             download_query = f'''
@@ -225,6 +231,9 @@ def download_required_tools(logger, artifacts_list):
             )
             SELECT inventory_add(
                 tool="{tool_name}",
+                url="{url}",
+                filename="{filename}",
+                version="{version}",
                 file=download[0].Content,
                 serve_locally=TRUE
             ) AS result
