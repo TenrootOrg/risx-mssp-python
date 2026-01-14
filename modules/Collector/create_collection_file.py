@@ -169,32 +169,39 @@ def download_required_tools(logger, artifacts_list):
     logger.info(f"Checking tools required for artifacts: {artifacts_list}")
 
     try:
-        # Get all tools required by the selected artifacts (with name and optional url)
+        # Get all tools required by the selected artifacts (with name, url, and version)
         artifacts_json = json.dumps(artifacts_list)
         tools_query = f"""
         LET artifact_names <= {artifacts_json}
         SELECT * FROM foreach(
             row={{SELECT tools FROM artifact_definitions(deps=TRUE, names=artifact_names) WHERE tools}},
             query={{SELECT * FROM foreach(row=tools, query={{
-                SELECT name, url FROM scope() WHERE name
+                SELECT name, url, version FROM scope() WHERE name
             }})}}
         ) GROUP BY name
         """
         tools_result = run_generic_vql(tools_query, logger)
 
-        # Build map of tool name -> url from artifact definitions
+        # Build map of tool name -> {url, version} from artifact definitions
         required_tools = {}
         for tool in tools_result:
             name = tool.get('name', '')
             url = tool.get('url', '')
+            version = tool.get('version', '')
             if name:
-                # Store URL (may be empty, will check inventory later)
-                required_tools[name] = url if url and not url.startswith('todo') else None
+                # Store URL and version (may be empty, will check inventory later)
+                required_tools[name] = {
+                    'url': url if url and not url.startswith('todo') else None,
+                    'version': version if version else 'latest'
+                }
 
         logger.info(f"Found {len(required_tools)} required tools: {list(required_tools.keys())}")
 
         # Check which tools need to be downloaded
-        for tool_name, artifact_url in required_tools.items():
+        for tool_name, tool_data in required_tools.items():
+            artifact_url = tool_data['url']
+            version = tool_data['version']
+
             # Check inventory for current download status and URL
             check_query = f"""
             SELECT name, url, serve_locally, serve_url, filestore_path
@@ -222,11 +229,8 @@ def download_required_tools(logger, artifacts_list):
                 logger.warning(f"Tool '{tool_name}' has no valid URL in artifact or inventory, skipping")
                 continue
 
-            # Extract filename and version from URL for proper metadata
+            # Extract filename from URL for proper metadata
             filename = url.split('/')[-1] if '/' in url else tool_name
-            import re
-            version_match = re.search(r'[/v_-](\d+\.\d+(?:\.\d+)?)', url)
-            version = version_match.group(1) if version_match else "latest"
 
             # Download the tool
             logger.info(f"Downloading tool: {tool_name} from {url[:60]}...")

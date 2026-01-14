@@ -520,7 +520,7 @@ async def download_velociraptor_tools(logger):
         SELECT * FROM foreach(
             row={SELECT tools FROM artifact_definitions() WHERE tools},
             query={SELECT * FROM foreach(row=tools, query={
-                SELECT name, url FROM scope() WHERE url AND NOT url =~ '^todo'
+                SELECT name, url, version FROM scope() WHERE url AND NOT url =~ '^todo'
             })}
         ) GROUP BY name
         """
@@ -528,13 +528,14 @@ async def download_velociraptor_tools(logger):
         artifact_tools = await async_run_generic_vql(artifact_tools_query, logger)
         logger.info(f"Found {len(artifact_tools)} tools defined in artifacts")
 
-        # Build a map of tool name -> URL from artifact definitions
+        # Build a map of tool name -> {url, version} from artifact definitions
         tool_urls = {}
         for tool in artifact_tools:
             name = tool.get('name', '')
             url = tool.get('url', '')
+            version = tool.get('version', '')
             if name and url and not url.startswith('todo'):
-                tool_urls[name] = url
+                tool_urls[name] = {'url': url, 'version': version if version else 'latest'}
 
         # Step 3: Get current inventory status to check what's already downloaded
         inventory_query = """
@@ -552,7 +553,10 @@ async def download_velociraptor_tools(logger):
         tools_failed = 0
 
         # Step 4: Download tools that need it
-        for tool_name, url in tool_urls.items():
+        for tool_name, tool_data in tool_urls.items():
+            url = tool_data['url']
+            version = tool_data['version']
+
             inv_tool = inventory_map.get(tool_name, {})
             serve_url = inv_tool.get('serve_url', '')
             filestore_path = inv_tool.get('filestore_path', '')
@@ -569,11 +573,6 @@ async def download_velociraptor_tools(logger):
             try:
                 # Extract filename from URL for proper metadata
                 filename = url.split('/')[-1] if '/' in url else tool_name
-
-                # Try to extract version from URL (common patterns like v1.2.3, 1.2.3, etc)
-                import re
-                version_match = re.search(r'[/v_-](\d+\.\d+(?:\.\d+)?)', url)
-                version = version_match.group(1) if version_match else "latest"
 
                 # Download tool using http_client and register with inventory_add
                 # Include url, filename, and version so offline collector has proper metadata
