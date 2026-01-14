@@ -574,7 +574,9 @@ async def download_velociraptor_tools(logger):
                     url = tool.get('url', '')
                     version = tool.get('version', '')
                     if name and url and not url.startswith('todo'):
-                        tool_urls[name] = {'url': url, 'version': version if version else 'latest'}
+                        # Treat empty or "Unknown" version as "latest"
+                        effective_version = 'latest' if not version or version == 'Unknown' else version
+                        tool_urls[name] = {'url': url, 'version': effective_version}
             except Exception as e:
                 logger.debug(f"No tools found for artifact {artifact_name}: {e}")
                 continue

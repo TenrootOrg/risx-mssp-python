@@ -188,9 +188,11 @@ def download_required_tools(logger, artifacts_list):
                     url = tool.get('url', '')
                     version = tool.get('version', '')
                     if name:
+                        # Treat empty or "Unknown" version as "latest"
+                        effective_version = 'latest' if not version or version == 'Unknown' else version
                         required_tools[name] = {
                             'url': url if url and not url.startswith('todo') else None,
-                            'version': version if version else 'latest'
+                            'version': effective_version
                         }
             except Exception as e:
                 logger.debug(f"No tools found for artifact {artifact_name}: {e}")
