@@ -500,7 +500,9 @@ async def download_velociraptor_tools(logger):
 
     Process:
     1. Run Server.Internal.ToolDependencies to ensure Velociraptor binaries are configured
-    2. Download all artifact tools that don't have files in the filestore
+    2. Get all tools from artifact definitions (which have the actual URLs)
+    3. Check inventory to see which tools need downloading
+    4. Download missing tools and set serve_locally=TRUE
     """
     try:
         # Step 1: Ensure Velociraptor collector binaries are configured by running ToolDependencies
@@ -512,50 +514,60 @@ async def download_velociraptor_tools(logger):
         except Exception as tool_dep_error:
             logger.warning(f"Server.Internal.ToolDependencies failed (may already be configured): {str(tool_dep_error)}")
 
-        # Step 2: Get list of all tools with their filestore status
-        # We check serve_url to determine if the tool is already downloaded
-        # serve_url is only set when the file is actually available locally
-        # Note: We don't filter by admin_override - we want to download all tools
-        # that don't have a local serve_url, including manually configured ones
-        inventory_query = """
-        SELECT name, url, serve_locally, filename, filestore_path, hash, serve_url
-        FROM inventory()
-        WHERE url
-          AND NOT url =~ '^todo'
+        # Step 2: Get all tools from artifact definitions
+        # This is the authoritative source for tool URLs (inventory can have empty URLs)
+        artifact_tools_query = """
+        SELECT * FROM foreach(
+            row={SELECT tools FROM artifact_definitions() WHERE tools},
+            query={SELECT * FROM foreach(row=tools, query={
+                SELECT name, url FROM scope() WHERE url AND NOT url =~ '^todo'
+            })}
+        ) GROUP BY name
         """
 
-        tools = await async_run_generic_vql(inventory_query, logger)
-        logger.info(f"Found {len(tools)} tools in inventory")
+        artifact_tools = await async_run_generic_vql(artifact_tools_query, logger)
+        logger.info(f"Found {len(artifact_tools)} tools defined in artifacts")
+
+        # Build a map of tool name -> URL from artifact definitions
+        tool_urls = {}
+        for tool in artifact_tools:
+            name = tool.get('name', '')
+            url = tool.get('url', '')
+            if name and url and not url.startswith('todo'):
+                tool_urls[name] = url
+
+        # Step 3: Get current inventory status to check what's already downloaded
+        inventory_query = """
+        SELECT name, url, serve_locally, filestore_path, hash, serve_url
+        FROM inventory()
+        """
+
+        inventory_tools = await async_run_generic_vql(inventory_query, logger)
+        inventory_map = {t.get('name', ''): t for t in inventory_tools}
+
+        logger.info(f"Found {len(inventory_map)} tools in inventory, {len(tool_urls)} tools with URLs in artifacts")
 
         tools_downloaded = 0
         tools_skipped = 0
         tools_failed = 0
 
-        for tool in tools:
-            tool_name = tool.get('name', 'Unknown')
-            url = tool.get('url', '')
-            serve_url = tool.get('serve_url', '')
-
-            # Skip tools with invalid URLs
-            if not url or url.startswith('todo'):
-                logger.debug(f"Tool '{tool_name}' has no valid URL, skipping")
-                tools_skipped += 1
-                continue
+        # Step 4: Download tools that need it
+        for tool_name, url in tool_urls.items():
+            inv_tool = inventory_map.get(tool_name, {})
+            serve_url = inv_tool.get('serve_url', '')
+            filestore_path = inv_tool.get('filestore_path', '')
+            tool_hash = inv_tool.get('hash', '')
 
             # Check if tool is already downloaded locally
             # When downloaded locally, serve_url contains '/public/' (local filestore path)
-            # When not downloaded, serve_url equals the original url (external URL)
-            # Also verify the file actually exists in filestore (filestore_path should have content)
-            filestore_path = tool.get('filestore_path', '')
-            tool_hash = tool.get('hash', '')
+            # and filestore_path + hash should be set
             if serve_url and '/public/' in serve_url and filestore_path and tool_hash:
-                logger.debug(f"Tool '{tool_name}' already available locally at {serve_url}, skipping")
+                logger.debug(f"Tool '{tool_name}' already available locally, skipping")
                 tools_skipped += 1
                 continue
 
             try:
                 # Download tool using http_client and register with inventory_add
-                # This downloads the file from URL and adds it to the filestore for local serving
                 logger.info(f"Downloading tool: {tool_name} from {url[:60]}...")
                 download_query = f"""
                 LET download <= SELECT Content FROM http_client(
@@ -573,9 +585,9 @@ async def download_velociraptor_tools(logger):
 
                 if result and result[0].get('result'):
                     result_data = result[0].get('result', {})
-                    serve_url = result_data.get('serve_url', '')
-                    if serve_url:
-                        logger.info(f"Successfully downloaded tool: {tool_name} -> {serve_url}")
+                    new_serve_url = result_data.get('serve_url', '')
+                    if new_serve_url:
+                        logger.info(f"Successfully downloaded tool: {tool_name} -> {new_serve_url}")
                     else:
                         logger.info(f"Successfully configured tool: {tool_name}")
                     tools_downloaded += 1
