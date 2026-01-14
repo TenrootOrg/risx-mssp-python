@@ -495,15 +495,53 @@ async def download_plaso_image(logger):
 
 async def download_velociraptor_tools(logger):
     """
-    Downloads all Velociraptor tools and sets them to serve_locally=TRUE.
+    Downloads Velociraptor tools for bestpractice artifacts and sets them to serve_locally=TRUE.
     This enables offline collector functionality in air-gapped environments.
 
     Process:
     1. Run Server.Internal.ToolDependencies to ensure Velociraptor binaries are configured
-    2. Get all tools from artifact definitions (which have the actual URLs)
+    2. Get tools from bestpractice artifact definitions (which have the actual URLs)
     3. Check inventory to see which tools need downloading
     4. Download missing tools and set serve_locally=TRUE
     """
+    # Bestpractice artifacts that require tools
+    bestpractice_artifacts = [
+        "Generic.Forensic.SQLiteHunter",
+        "Windows.Analysis.EvidenceOfDownload",
+        "Windows.NTFS.MFT",
+        "Windows.Forensics.Usn",
+        "Windows.Network.NetstatEnriched",
+        "Windows.Nirsoft.LastActivityView",
+        "Custom.Windows.System.Powershell",
+        "Windows.Forensics.Lnk",
+        "Exchange.PSList.VTLookup.Server",
+        "Generic.System.Pstree",
+        "Windows.System.UntrustedBinaries",
+        "Windows.Detection.Yara.Process",
+        "Windows.EventLogs.RDPAuth",
+        "Windows.Attack.UnexpectedImagePath",
+        "Windows.Sys.AllUsers",
+        "Windows.Registry.Sysinternals.Eulacheck",
+        "DetectRaptor.Generic.Detection.HiddenFilesDirectory",
+        "DetectRaptor.Generic.Detection.Webshells",
+        "DetectRaptor.Windows.Detection.Applications.Chrome.History",
+        "DetectRaptor.Windows.Detection.Applications.Edge.History",
+        "DetectRaptor.Windows.Detection.Applications.Firefox.History",
+        "DetectRaptor.Windows.Detection.Evtx.Bootup",
+        "DetectRaptor.Windows.Detection.Evtx.NamedPipes",
+        "DetectRaptor.Windows.Detection.Evtx.PersistenceSniper",
+        "DetectRaptor.Windows.Detection.Evtx.ProcessCreation",
+        "DetectRaptor.Windows.Detection.Evtx.RDP",
+        "DetectRaptor.Windows.Detection.Evtx.ServiceCreation",
+        "DetectRaptor.Windows.Detection.Evtx.TaskScheduler",
+        "DetectRaptor.Windows.Detection.Evtx.WindowsDefender",
+        "DetectRaptor.Windows.Detection.HijackLibsEnv",
+        "DetectRaptor.Windows.Detection.HijackLibsMFT",
+        "DetectRaptor.Windows.Detection.MFT",
+        "DetectRaptor.Windows.Detection.NamedPipes",
+        "DetectRaptor.Windows.Detection.Webshells",
+    ]
+
     try:
         # Step 1: Ensure Velociraptor collector binaries are configured by running ToolDependencies
         logger.info("Running Server.Internal.ToolDependencies to configure Velociraptor binaries...")
@@ -514,14 +552,16 @@ async def download_velociraptor_tools(logger):
         except Exception as tool_dep_error:
             logger.warning(f"Server.Internal.ToolDependencies failed (may already be configured): {str(tool_dep_error)}")
 
-        # Step 2: Get all tools from artifact definitions
+        # Step 2: Get tools only from bestpractice artifact definitions
         # This is the authoritative source for tool URLs (inventory can have empty URLs)
-        artifact_tools_query = """
+        artifacts_json = json.dumps(bestpractice_artifacts)
+        artifact_tools_query = f"""
+        LET artifact_names <= {artifacts_json}
         SELECT * FROM foreach(
-            row={SELECT tools FROM artifact_definitions() WHERE tools},
-            query={SELECT * FROM foreach(row=tools, query={
+            row={{SELECT tools FROM artifact_definitions(deps=TRUE, names=artifact_names) WHERE tools}},
+            query={{SELECT * FROM foreach(row=tools, query={{
                 SELECT name, url, version FROM scope() WHERE url AND NOT url =~ '^todo'
-            })}
+            }})}}
         ) GROUP BY name
         """
 
