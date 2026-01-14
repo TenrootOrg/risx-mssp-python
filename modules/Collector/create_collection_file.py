@@ -157,6 +157,100 @@ def create_zip(files_to_zip, zip_file_path, logger):
         logger.error(f"Error while creating zip file: {str(e)}")
 
 
+def download_required_tools(logger, artifacts_list):
+    """
+    Download all tools required by the specified artifacts and set serve_locally=TRUE.
+    This ensures the offline collector will include all necessary tools.
+
+    Args:
+        logger: Logger instance
+        artifacts_list: List of artifact names that will be collected
+    """
+    logger.info(f"Checking tools required for artifacts: {artifacts_list}")
+
+    try:
+        # Get all tools required by the selected artifacts
+        artifacts_json = json.dumps(artifacts_list)
+        tools_query = f"""
+        LET artifact_names <= {artifacts_json}
+        SELECT tools FROM artifact_definitions(deps=TRUE, names=artifact_names)
+        """
+        tools_result = run_generic_vql(tools_query, logger)
+
+        # Extract unique tool names
+        required_tools = set()
+        for row in tools_result:
+            if row.get('tools'):
+                for tool in row['tools']:
+                    if tool.get('name'):
+                        required_tools.add(tool['name'])
+
+        logger.info(f"Found {len(required_tools)} required tools: {required_tools}")
+
+        # Check which tools need to be downloaded
+        for tool_name in required_tools:
+            check_query = f"""
+            SELECT name, url, serve_locally, serve_url, filestore_path
+            FROM inventory()
+            WHERE name = '{tool_name}'
+            """
+            tool_info = run_generic_vql(check_query, logger)
+
+            if not tool_info:
+                logger.warning(f"Tool '{tool_name}' not found in inventory, skipping")
+                continue
+
+            tool = tool_info[0]
+            url = tool.get('url', '')
+            serve_locally = tool.get('serve_locally', False)
+            serve_url = tool.get('serve_url', '')
+            filestore_path = tool.get('filestore_path', '')
+
+            # Skip if already served locally with valid filestore
+            if serve_locally and '/public/' in str(serve_url) and filestore_path:
+                logger.info(f"Tool '{tool_name}' already available locally, skipping")
+                continue
+
+            # Skip if no URL to download from
+            if not url or url.startswith('todo'):
+                logger.warning(f"Tool '{tool_name}' has no valid URL, skipping")
+                continue
+
+            # Download the tool
+            logger.info(f"Downloading tool: {tool_name} from {url[:60]}...")
+            download_query = f'''
+            LET download <= SELECT Content FROM http_client(
+                url="{url}",
+                tempfile_extension=".tmp"
+            )
+            SELECT inventory_add(
+                tool="{tool_name}",
+                file=download[0].Content,
+                serve_locally=TRUE
+            ) AS result
+            FROM scope()
+            '''
+
+            try:
+                result = run_generic_vql(download_query, logger)
+                if result and result[0].get('result'):
+                    logger.info(f"Successfully downloaded tool: {tool_name}")
+                else:
+                    logger.warning(f"Failed to download tool: {tool_name}")
+            except Exception as e:
+                logger.error(f"Error downloading tool '{tool_name}': {str(e)}")
+                continue
+
+            # Small delay between downloads
+            time.sleep(1)
+
+        logger.info("Tool download check complete")
+
+    except Exception as e:
+        logger.error(f"Error in download_required_tools: {str(e)}")
+        logger.error(traceback.format_exc())
+
+
 def run_server_artifact(logger, config_data, config_agent):
     logger.info(
         "Running server artifact query. "
@@ -199,6 +293,11 @@ def run_server_artifact(logger, config_data, config_agent):
         artifacts_dict["Server.Utils.CreateCollector"]["opt_timeout"] = config_data[
             "Resources"
         ]["MaxExecutionTimeInSeconds"]
+
+        # Download all required tools before creating the collector
+        # This ensures tools are available locally and will be bundled in the collector
+        logger.info("Downloading required tools for offline collector...")
+        download_required_tools(logger, artifactsListArr)
 
         FlowId = modules.Velociraptor.VelociraptorScript.run_server_artifact(
             "Server.Utils.CreateCollector", logger, artifacts_dict
