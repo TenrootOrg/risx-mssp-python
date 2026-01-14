@@ -169,54 +169,53 @@ def download_required_tools(logger, artifacts_list):
     logger.info(f"Checking tools required for artifacts: {artifacts_list}")
 
     try:
-        # Get all tools required by the selected artifacts
+        # Get all tools required by the selected artifacts (with name AND url from artifact definitions)
         artifacts_json = json.dumps(artifacts_list)
         tools_query = f"""
         LET artifact_names <= {artifacts_json}
-        SELECT tools FROM artifact_definitions(deps=TRUE, names=artifact_names)
+        SELECT * FROM foreach(
+            row={{SELECT tools FROM artifact_definitions(deps=TRUE, names=artifact_names) WHERE tools}},
+            query={{SELECT * FROM foreach(row=tools, query={{
+                SELECT name, url FROM scope() WHERE name AND url AND NOT url =~ '^todo'
+            }})}}
+        ) GROUP BY name
         """
         tools_result = run_generic_vql(tools_query, logger)
 
-        # Extract unique tool names
-        required_tools = set()
-        for row in tools_result:
-            if row.get('tools'):
-                for tool in row['tools']:
-                    if tool.get('name'):
-                        required_tools.add(tool['name'])
+        # Build map of tool name -> url from artifact definitions (authoritative source)
+        required_tools = {}
+        for tool in tools_result:
+            name = tool.get('name', '')
+            url = tool.get('url', '')
+            if name and url and not url.startswith('todo'):
+                required_tools[name] = url
 
-        logger.info(f"Found {len(required_tools)} required tools: {required_tools}")
+        logger.info(f"Found {len(required_tools)} required tools: {list(required_tools.keys())}")
 
         # Check which tools need to be downloaded
-        for tool_name in required_tools:
+        for tool_name, artifact_url in required_tools.items():
+            # Check inventory for current download status
             check_query = f"""
-            SELECT name, url, serve_locally, serve_url, filestore_path, version
+            SELECT name, serve_locally, serve_url, filestore_path, version
             FROM inventory()
             WHERE name = '{tool_name}'
             """
             tool_info = run_generic_vql(check_query, logger)
 
-            if not tool_info:
-                logger.warning(f"Tool '{tool_name}' not found in inventory, skipping")
-                continue
+            if tool_info:
+                tool = tool_info[0]
+                serve_locally = tool.get('serve_locally', False)
+                serve_url = tool.get('serve_url', '')
+                filestore_path = tool.get('filestore_path', '')
+                version = tool.get('version', '')
 
-            tool = tool_info[0]
-            url = tool.get('url', '')
-            serve_locally = tool.get('serve_locally', False)
-            serve_url = tool.get('serve_url', '')
-            filestore_path = tool.get('filestore_path', '')
-            version = tool.get('version', '')
+                # Skip if already served locally with valid filestore AND version
+                if serve_locally and '/public/' in str(serve_url) and filestore_path and version:
+                    logger.info(f"Tool '{tool_name}' already available locally with version {version}, skipping")
+                    continue
 
-            # Skip if already served locally with valid filestore AND version
-            # If version is missing, re-download to get proper metadata
-            if serve_locally and '/public/' in str(serve_url) and filestore_path and version:
-                logger.info(f"Tool '{tool_name}' already available locally with version {version}, skipping")
-                continue
-
-            # Skip if no URL to download from
-            if not url or url.startswith('todo'):
-                logger.warning(f"Tool '{tool_name}' has no valid URL, skipping")
-                continue
+            # Use URL from artifact definition (not from inventory)
+            url = artifact_url
 
             # Extract filename and version from URL for proper metadata
             filename = url.split('/')[-1] if '/' in url else tool_name
