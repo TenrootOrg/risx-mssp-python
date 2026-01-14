@@ -567,7 +567,11 @@ async def download_velociraptor_tools(logger):
                 continue
 
             try:
+                # Extract filename from URL for proper metadata
+                filename = url.split('/')[-1] if '/' in url else tool_name
+
                 # Download tool using http_client and register with inventory_add
+                # Include url and filename so offline collector knows file type (zip vs exe)
                 logger.info(f"Downloading tool: {tool_name} from {url[:60]}...")
                 download_query = f"""
                 LET download <= SELECT Content FROM http_client(
@@ -576,6 +580,8 @@ async def download_velociraptor_tools(logger):
                 )
                 SELECT inventory_add(
                     tool="{tool_name}",
+                    url="{url}",
+                    filename="{filename}",
                     file=download[0].Content,
                     serve_locally=TRUE
                 ) AS result
