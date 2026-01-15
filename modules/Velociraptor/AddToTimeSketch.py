@@ -488,7 +488,8 @@ SELECT create_flow_download(
                         # additionals.funcs.run_subprocess(f"sudo docker run --rm -v /home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso/:/data/ alpine sh -c 'rm -f /data/.timesketch.token'", "", logger)
                         additionals.funcs.run_subprocess(f"sudo rm -f /home/node/.timesketch.token", "", logger)
                         additionals.funcs.run_subprocess(f"sudo rm -f /home/node/.timesketchrc", "", logger)
-                        additionals.funcs.run_subprocess(f"sudo rm -f /data/{client_name}Artifacts.plaso", "", logger)
+                        # Use /plaso/ path (backend container mount) not /data/ (plaso container mount)
+                        additionals.funcs.run_subprocess(f"sudo rm -f /plaso/{client_name}Artifacts.plaso", "", logger)
 
                         # Create .timesketchrc with SSL verification disabled for self-signed certificates
                         logger.info("Creating .timesketchrc config with SSL verification disabled")
@@ -775,7 +776,8 @@ SELECT create_flow_download(
                                     logger.info("Removing previous artifacts.plaso")
                                     additionals.funcs.run_subprocess(f"sudo rm -f /home/node/.timesketch.token", "", logger)
                                     additionals.funcs.run_subprocess(f"sudo rm -f /home/node/.timesketchrc", "", logger)
-                                    additionals.funcs.run_subprocess(f"sudo rm -f /data/{client_name}Artifacts.plaso", "", logger)
+                                    # Use /plaso/ path (backend container mount) not /data/ (plaso container mount)
+                                    additionals.funcs.run_subprocess(f"sudo rm -f /plaso/{client_name}Artifacts.plaso", "", logger)
 
                                     # Create .timesketchrc with SSL verification disabled
                                     logger.info("Creating .timesketchrc config with SSL verification disabled")
