@@ -47,7 +47,7 @@ shodan==1.31.0
 six==1.16.0
 soupsieve==2.6
 timesketch-api-client==20251219
-timesketch-import-client==20260108
+timesketch-import-client==20251219
 tldextract==5.1.2
 typing_extensions==4.12.2
 tzdata==2024.1

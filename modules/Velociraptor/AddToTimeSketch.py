@@ -509,8 +509,8 @@ verify = False
 
                         # Run pinfo on the plaso file and save output to log
                         logger.info("Running pinfo on plaso file...")
-                        pinfo_command = f"sudo docker run --rm -v {plaso_dir}/:/data log2timeline/plaso sh -c 'pinfo.py /data/{client_name}Artifacts.plaso > /data/pinfo_{client_name}_{log_datetime}.log 2>&1'"
-                        additionals.funcs.run_subprocess(pinfo_command, "Pinfo completed", logger)
+                        pinfo_command = f"sudo docker run --rm -v {plaso_dir}/:/data log2timeline/plaso pinfo -w /data/pinfo_{client_name}_{log_datetime}.log /data/{client_name}Artifacts.plaso"
+                        additionals.funcs.run_subprocess(pinfo_command, "", logger)
 
                         #Wait for plaso
                         logger.info("Waiting for plaso to finish!")
@@ -796,8 +796,8 @@ verify = False
 
                                     # Run pinfo on the plaso file and save output to log
                                     logger.info("Running pinfo on plaso file...")
-                                    pinfo_command = f"sudo docker run --rm -v {plaso_dir}/:/data log2timeline/plaso sh -c 'pinfo.py /data/{client_name}Artifacts.plaso > /data/pinfo_{client_name}_{log_datetime}.log 2>&1'"
-                                    additionals.funcs.run_subprocess(pinfo_command, "Pinfo completed", logger)
+                                    pinfo_command = f"sudo docker run --rm -v {plaso_dir}/:/data log2timeline/plaso pinfo -w /data/pinfo_{client_name}_{log_datetime}.log /data/{client_name}Artifacts.plaso"
+                                    additionals.funcs.run_subprocess(pinfo_command, "", logger)
 
                                     # Run timesketch importer
                                     logger.info("Running timesketch importer!")
