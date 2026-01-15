@@ -457,28 +457,27 @@ SELECT create_flow_download(
                         host_extract_dir = f"/home/tenroot/setup_platform/workdir/tmp/plaso_extract_{client_name}_{flow_id}"
                         zip_path = f"/velociraptor{export_path}"
 
-                        # Extract using unzip inside velociraptor container, then copy to host
-                        logger.info(f"Extracting ZIP for plaso processing...")
+                        # Copy ZIP from velociraptor container for plaso processing
+                        logger.info(f"Copying ZIP for plaso processing...")
                         additionals.funcs.run_subprocess(f"sudo rm -rf {extract_dir}", "", logger)
                         additionals.funcs.run_subprocess(f"sudo mkdir -p {extract_dir}", "", logger)
 
-                        # Copy ZIP from velociraptor container and extract
-                        # Note: docker cp from inside container writes to container's filesystem view
-                        # so use container path (/tmp/...) not host path
+                        # Copy ZIP from velociraptor container (plaso can process zip directly)
+                        zip_file_path = f"{extract_dir}/collection.zip"
+                        host_zip_path = f"{host_extract_dir}/collection.zip"
                         additionals.funcs.run_subprocess(
-                            f"sudo docker cp velociraptor:{zip_path} {extract_dir}/collection.zip",
-                            "", logger
-                        )
-                        additionals.funcs.run_subprocess(
-                            f"cd {extract_dir} && sudo unzip -o collection.zip",
+                            f"sudo docker cp velociraptor:{zip_path} {zip_file_path}",
                             "", logger
                         )
 
-                        # Run plaso on extracted directory
-                        # Use host path for docker volume mount
-                        logger.info(f"Using extracted directory for plaso: {host_extract_dir}")
+                        # Run plaso directly on ZIP file (no extraction needed)
+                        logger.info(f"Using ZIP file for plaso: {host_zip_path}")
 
-                        command1 = f"sudo docker run --rm -v {host_extract_dir}:{host_extract_dir}:ro -v /home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso/:/data --cpus='{cpus}' --memory='{ram}' --user root log2timeline/plaso log2timeline --workers {cpus} --status_view window --status_view_interval 60 --storage-file /data/{client_name}Artifacts.plaso {host_extract_dir}"
+                        # Generate timestamp for log files
+                        log_datetime = datetime.now().strftime("%d-%m-%Y-%H-%M-%S")
+                        plaso_dir = "/home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso"
+
+                        command1 = f"sudo docker run --rm -v {host_extract_dir}:{host_extract_dir}:ro -v {plaso_dir}/:/data --cpus='{cpus}' --memory='{ram}' --user root log2timeline/plaso log2timeline --workers {cpus} --status_view window --status_view_interval 60 --logfile /data/log2timeline_{client_name}_{log_datetime}.log --storage-file /data/{client_name}Artifacts.plaso {host_zip_path}"
                         api = connect_timesketch_api(general_config, logger)
                         #Check if there existing sketch or not
                         row, command2 = get_command2(general_config, api, row, host_name, user_name, client_name, logger)
@@ -507,6 +506,12 @@ verify = False
                         logger.info("Running plaso!")
                         # Return after loading file
                         additionals.funcs.run_subprocess(command1,"Processing completed", logger)
+
+                        # Run pinfo on the plaso file and save output to log
+                        logger.info("Running pinfo on plaso file...")
+                        pinfo_command = f"sudo docker run --rm -v {plaso_dir}/:/data log2timeline/plaso sh -c 'pinfo.py /data/{client_name}Artifacts.plaso > /data/pinfo_{client_name}_{log_datetime}.log 2>&1'"
+                        additionals.funcs.run_subprocess(pinfo_command, "Pinfo completed", logger)
+
                         #Wait for plaso
                         logger.info("Waiting for plaso to finish!")
                         #while is_plaso_running(logger):
@@ -734,28 +739,27 @@ SELECT create_flow_download(
                                     host_extract_dir = f"/home/tenroot/setup_platform/workdir/tmp/plaso_extract_{client_name}_{flow_id}"
                                     zip_path = f"/velociraptor{export_path}"
 
-                                    # Extract using unzip inside velociraptor container, then copy to host
-                                    logger.info(f"Extracting ZIP for plaso processing...")
+                                    # Copy ZIP from velociraptor container for plaso processing
+                                    logger.info(f"Copying ZIP for plaso processing...")
                                     additionals.funcs.run_subprocess(f"sudo rm -rf {extract_dir}", "", logger)
                                     additionals.funcs.run_subprocess(f"sudo mkdir -p {extract_dir}", "", logger)
 
-                                    # Copy ZIP from velociraptor container and extract
-                                    # Note: docker cp from inside container writes to container's filesystem view
-                                    # so use container path (/tmp/...) not host path
+                                    # Copy ZIP from velociraptor container (plaso can process zip directly)
+                                    zip_file_path = f"{extract_dir}/collection.zip"
+                                    host_zip_path = f"{host_extract_dir}/collection.zip"
                                     additionals.funcs.run_subprocess(
-                                        f"sudo docker cp velociraptor:{zip_path} {extract_dir}/collection.zip",
-                                        "", logger
-                                    )
-                                    additionals.funcs.run_subprocess(
-                                        f"cd {extract_dir} && sudo unzip -o collection.zip",
+                                        f"sudo docker cp velociraptor:{zip_path} {zip_file_path}",
                                         "", logger
                                     )
 
-                                    # Run plaso on extracted directory
-                                    # Use host path for docker volume mount
-                                    logger.info(f"Using extracted directory for plaso: {host_extract_dir}")
+                                    # Run plaso directly on ZIP file (no extraction needed)
+                                    logger.info(f"Using ZIP file for plaso: {host_zip_path}")
 
-                                    command1 = f"sudo docker run --rm -v {host_extract_dir}:{host_extract_dir}:ro -v /home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso/:/data --cpus='{cpus}' --memory='{ram}' --user root log2timeline/plaso log2timeline --workers {cpus} --status_view window --status_view_interval 60 --storage-file /data/{client_name}Artifacts.plaso {host_extract_dir}"
+                                    # Generate timestamp for log files
+                                    log_datetime = datetime.now().strftime("%d-%m-%Y-%H-%M-%S")
+                                    plaso_dir = "/home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso"
+
+                                    command1 = f"sudo docker run --rm -v {host_extract_dir}:{host_extract_dir}:ro -v {plaso_dir}/:/data --cpus='{cpus}' --memory='{ram}' --user root log2timeline/plaso log2timeline --workers {cpus} --status_view window --status_view_interval 60 --logfile /data/log2timeline_{client_name}_{log_datetime}.log --storage-file /data/{client_name}Artifacts.plaso {host_zip_path}"
 
                                     # Connect to Timesketch API
                                     api = connect_timesketch_api(general_config, logger)
@@ -789,6 +793,11 @@ verify = False
                                     # Run plaso
                                     logger.info("Running plaso!")
                                     additionals.funcs.run_subprocess(command1, "Processing completed", logger)
+
+                                    # Run pinfo on the plaso file and save output to log
+                                    logger.info("Running pinfo on plaso file...")
+                                    pinfo_command = f"sudo docker run --rm -v {plaso_dir}/:/data log2timeline/plaso sh -c 'pinfo.py /data/{client_name}Artifacts.plaso > /data/pinfo_{client_name}_{log_datetime}.log 2>&1'"
+                                    additionals.funcs.run_subprocess(pinfo_command, "Pinfo completed", logger)
 
                                     # Run timesketch importer
                                     logger.info("Running timesketch importer!")
