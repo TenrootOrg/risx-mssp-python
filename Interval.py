@@ -503,6 +503,9 @@ async def download_velociraptor_tools(logger):
     2. Get tools from bestpractice artifact definitions (which have the actual URLs)
     3. Check inventory to see which tools need downloading
     4. Download missing tools and set serve_locally=TRUE
+
+    Note: This function should be run while the system has network connectivity.
+    Once tools are downloaded and serve_locally=TRUE, they will work in air-gapped mode.
     """
     # Bestpractice artifacts that require tools (must match seed_for_OnPremiseVeloConfig.js)
     bestpractice_artifacts = [
@@ -600,6 +603,7 @@ async def download_velociraptor_tools(logger):
         tools_downloaded = 0
         tools_skipped = 0
         tools_failed = 0
+        tools_already_local = 0
 
         # Step 4: Download tools that need it
         for tool_name, tool_data in tool_urls.items():
@@ -616,53 +620,73 @@ async def download_velociraptor_tools(logger):
             # and filestore_path + hash should be set
             if serve_url and '/public/' in serve_url and filestore_path and tool_hash:
                 logger.debug(f"Tool '{tool_name}' already available locally, skipping")
-                tools_skipped += 1
+                tools_already_local += 1
                 continue
 
             try:
-                # Extract filename from URL for proper metadata
-                filename = url.split('/')[-1] if '/' in url else tool_name
-
                 # Download tool using http_client and register with inventory_add
                 # admin_override=TRUE ensures this overrides the artifact definition's tool entry
                 # This prevents duplicate inventory entries and ensures repack() uses local files
-                logger.info(f"Downloading tool: {tool_name} from {url[:60]}...")
-                download_query = f"""
+                logger.info(f"Downloading tool: {tool_name} from {url[:80]}...")
+
+                # Download and add to inventory in one combined query
+                # http_client returns Content as the temp file path when successful
+                # We immediately pass it to inventory_add in the same VQL context
+                download_and_add_query = f"""
                 LET download <= SELECT Content FROM http_client(
                     url="{url}",
                     tempfile_extension=".tmp"
                 )
-                SELECT inventory_add(
-                    tool="{tool_name}",
-                    file=download[0].Content,
-                    serve_locally=TRUE,
-                    admin_override=TRUE
-                ) AS result
-                FROM scope()
+                LET add_result = if(
+                    condition=download[0].Content,
+                    then=inventory_add(
+                        tool="{tool_name}",
+                        file=download[0].Content,
+                        serve_locally=TRUE
+                    )
+                )
+                SELECT download[0].Content AS content_path, add_result AS result FROM scope()
                 """
-                result = await async_run_generic_vql(download_query, logger)
+                result = await async_run_generic_vql(download_and_add_query, logger)
+
+                if not result or not result[0].get('content_path'):
+                    logger.warning(f"Tool '{tool_name}' download failed - no content received")
+                    tools_failed += 1
+                    await asyncio.sleep(1)
+                    continue
 
                 if result and result[0].get('result'):
                     result_data = result[0].get('result', {})
                     new_serve_url = result_data.get('serve_url', '')
+                    new_hash = result_data.get('hash', '')
                     if new_serve_url:
-                        logger.info(f"Successfully downloaded tool: {tool_name} -> {new_serve_url}")
+                        logger.info(f"Successfully downloaded and registered tool: {tool_name} (hash: {new_hash[:16] if new_hash else 'N/A'}...)")
                     else:
                         logger.info(f"Successfully configured tool: {tool_name}")
                     tools_downloaded += 1
                 else:
-                    logger.warning(f"No result returned for tool download: {tool_name}")
+                    logger.warning(f"Tool '{tool_name}' - inventory_add returned empty result")
                     tools_failed += 1
 
                 # Small delay between downloads to avoid overwhelming the server
                 await asyncio.sleep(2)
 
             except Exception as tool_error:
-                logger.error(f"Failed to download tool '{tool_name}': {str(tool_error)}")
+                error_str = str(tool_error)
+                # Check for network-related errors
+                if any(err in error_str.lower() for err in ['lookup', 'dns', 'resolve', 'connection', 'timeout', 'network', 'misbehaving']):
+                    logger.warning(f"Network error downloading tool '{tool_name}': {error_str}")
+                else:
+                    logger.error(f"Failed to download tool '{tool_name}': {error_str}")
                 tools_failed += 1
+                await asyncio.sleep(1)
                 continue
 
-        logger.info(f"Tool download complete: {tools_downloaded} downloaded, {tools_skipped} skipped, {tools_failed} failed")
+        logger.info(f"Tool download summary: {tools_downloaded} downloaded, {tools_already_local} already local, {tools_skipped} skipped, {tools_failed} failed")
+
+        if tools_failed > 0:
+            logger.warning(f"{tools_failed} tools failed to download. Ensure network connectivity is available during initial setup.")
+            logger.warning("Once all tools are downloaded successfully, the system can operate in air-gapped mode.")
 
     except Exception as e:
         logger.error(f"Error in download_velociraptor_tools: {str(e)}")
