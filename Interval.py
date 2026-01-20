@@ -541,6 +541,7 @@ async def download_velociraptor_tools(logger):
         "DetectRaptor.Windows.Detection.Webhistory",
         "DetectRaptor.Windows.Detection.YaraProcessWin",
         "DetectRaptor.Windows.Detection.ZoneIdentifier",
+        "DetectRaptor.Windows.Detection.LolRMM",
         # Additional artifacts with tools (not in seed but needed for tool download)
         "Exchange.Windows.HardeningKitty",
         "Windows.EventLogs.Hayabusa",
@@ -623,7 +624,8 @@ async def download_velociraptor_tools(logger):
                 filename = url.split('/')[-1] if '/' in url else tool_name
 
                 # Download tool using http_client and register with inventory_add
-                # Include url, filename, and version so offline collector has proper metadata
+                # admin_override=TRUE ensures this overrides the artifact definition's tool entry
+                # This prevents duplicate inventory entries and ensures repack() uses local files
                 logger.info(f"Downloading tool: {tool_name} from {url[:60]}...")
                 download_query = f"""
                 LET download <= SELECT Content FROM http_client(
@@ -632,11 +634,9 @@ async def download_velociraptor_tools(logger):
                 )
                 SELECT inventory_add(
                     tool="{tool_name}",
-                    url="{url}",
-                    filename="{filename}",
-                    version="{version}",
                     file=download[0].Content,
-                    serve_locally=TRUE
+                    serve_locally=TRUE,
+                    admin_override=TRUE
                 ) AS result
                 FROM scope()
                 """
