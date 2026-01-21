@@ -55,7 +55,7 @@ def is_plaso_running(logger):
         logger.info("In plaso_running function!")
         # Run the docker ps command
         result = subprocess.run(['sudo','docker', 'ps'], capture_output=True, text=True, check=True)
-        logger.info("Twwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww")
+        logger.info("Checking if plaso container is already running...")
         # Check if log2timeline/plaso is in the output
         return 'log2timeline/plaso' in result.stdout
     except subprocess.CalledProcessError as e:
@@ -276,14 +276,15 @@ def get_command2(config, api, row, host_name, user_name, client_name, logger):
     logger.info("Checking if sketch exists or not [Need timesketch importer connection!]")
     ip = config['ClientData']['API']['Timesketch']["IP"]
     timesketch_importer_path = ""
-    PathToPlaso = ""
+    PathToJsonl = ""
     # When the shell is inside a container the user name will always be node else its dev version
+    # Using JSONL file instead of plaso to bypass Timesketch's internal psort winevtx bug
     if(user_name == "node"):
         timesketch_importer_path = f"/usr/local/bin/timesketch_importer"
-        PathToPlaso = f"/plaso/{client_name}Artifacts.plaso"
+        PathToJsonl = f"/plaso/{client_name}Artifacts.jsonl"
     else:
         timesketch_importer_path = f"/home/{user_name}/.local/bin/timesketch_importer"
-        PathToPlaso = f"/home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso/{client_name}Artifacts.plaso"
+        PathToJsonl = f"/home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso/{client_name}Artifacts.jsonl"
 
     # Add a check for sketch_id and construct command
     # TimeSketch is accessible at root path https://{ip}/ (not /timesketch subpath due to known subpath issues)
@@ -291,11 +292,11 @@ def get_command2(config, api, row, host_name, user_name, client_name, logger):
     if sketch_id is not None:
         logger.info(f"Sketch with the same name found. Sketchid: {sketch_id}")
         row["UniqueID"] = {"SketchID": sketch_id, "TimelineID": timeline_name}
-        return row, f'{timesketch_importer_path} -u {username} -p {password} --host https://{ip}/ --timeline_name {timeline_name} --sketch_id {sketch_id} {PathToPlaso} --quick'
+        return row, f'{timesketch_importer_path} -u {username} -p {password} --host https://{ip}/ --timeline_name {timeline_name} --sketch_id {sketch_id} {PathToJsonl} --quick'
     else:
         logger.info(f"Sketch with the same name not found. Creating new Sketch: {sketch_name}")
         row["UniqueID"] = {"SketchID": sketch_name, "TimelineID": timeline_name}
-        return row, f'{timesketch_importer_path} -u {username} -p {password} --host https://{ip}/ --timeline_name {timeline_name} --sketch_name {sketch_name} {PathToPlaso} --quick'
+        return row, f'{timesketch_importer_path} -u {username} -p {password} --host https://{ip}/ --timeline_name {timeline_name} --sketch_name {sketch_name} {PathToJsonl} --quick'
 
 
 def get_sketch_id(api, sketch_name, logger):
@@ -364,7 +365,20 @@ def start_timesketch(row, general_config, logger):
             row["Error"] = "Timesketch plaso is already running. Let it finish and run again later"
             return row
     
-        logger.info("KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK")
+        logger.info("=" * 60)
+        logger.info("TIMESKETCH PIPELINE STARTED")
+        logger.info("=" * 60)
+        logger.info("Configuration:")
+        logger.info(f"  - ArtifactTimeOutInMinutes: {row.get('ArtifactTimeOutInMinutes', 'N/A')}")
+        logger.info(f"  - SketchName: {row['Arguments'].get('SketchName', 'N/A')}")
+        logger.info(f"  - KapeCollection: {row['Arguments'].get('KapeCollection', 'N/A')}")
+        logger.info(f"  - CPUThrottling: {row['Arguments'].get('CPUThrottling', 'N/A')}%")
+        logger.info(f"  - MemoryThrottling: {row['Arguments'].get('MemoryThrottling', 'N/A')}%")
+        logger.info(f"  - DateRangeStart: {row['Arguments'].get('DateRangeStart', '*')}")
+        logger.info(f"  - DateRangeEnd: {row['Arguments'].get('DateRangeEnd', '*')}")
+        logger.info(f"  - Parsers: {row['Arguments'].get('Parsers', '*')}")
+        logger.info(f"  - Population: {len(row.get('Population', []))} client(s)")
+        logger.info("-" * 60)
         config_path = os.path.join("modules", "Velociraptor", "dependencies", "api.config.yaml")
         velociraptor_config = ""
         with open(config_path, 'r') as f:
@@ -389,12 +403,16 @@ def start_timesketch(row, general_config, logger):
                     if(client_name in host_client_id_dict):
                         logger.info("Client name:" + client_name)
                         client_id = host_client_id_dict[client_name]
-                        logger.info(f"Timeout is {row['ArtifactTimeOutInMinutes']} seconds!")
-                        logger.info(f"Kape CPU limit: 50")
+                        logger.info("-" * 40)
+                        logger.info(f"[STEP 1/7] KAPE ARTIFACT COLLECTION")
+                        logger.info("-" * 40)
+                        logger.info(f"Client: {client_name} (ID: {client_id})")
+                        logger.info(f"KAPE Collection: {row['Arguments']['KapeCollection']}")
+                        logger.info(f"Timeout: {row['ArtifactTimeOutInMinutes']} seconds")
+                        logger.info(f"CPU Limit: 50%")
                         cpu_limit = 50
-                        # Return after loading file
                         flow_id = run_artifact_on_client(channel=channel, client_id=client_id, kape_collection=row["Arguments"]["KapeCollection"], timeout = int(row["ArtifactTimeOutInMinutes"]), cpu_limit = cpu_limit, logger=logger)
-                        logger.info(f"flowid: {flow_id}")
+                        logger.info(f"[STEP 1/7] COMPLETE - Flow ID: {flow_id}")
                         # Get the username
                         user_name = subprocess.run(['whoami'], stdout=subprocess.PIPE, text=True).stdout.strip()
                         # user_name="tenroot"
@@ -411,7 +429,9 @@ def start_timesketch(row, general_config, logger):
                         logger.info("Number of CPUs:" + cpus)
                         logger.info("Number of Memory:" + ram)
 
-                        # Export collection as ZIP using create_flow_download (decompresses zlib files)
+                        logger.info("-" * 40)
+                        logger.info(f"[STEP 2/7] EXPORT COLLECTION AS ZIP")
+                        logger.info("-" * 40)
                         logger.info(f"Exporting collection {flow_id} as ZIP for plaso processing...")
                         export_query = f"""
 SELECT create_flow_download(
@@ -448,7 +468,7 @@ SELECT create_flow_download(
                         if export_path.startswith('fs:'):
                             export_path = export_path[3:]
 
-                        logger.info(f"Collection exported to: {export_path}")
+                        logger.info(f"[STEP 2/7] COMPLETE - Exported to: {export_path}")
 
                         # Extract ZIP to temp directory for plaso
                         # Note: Container's /tmp maps to /home/tenroot/setup_platform/workdir/tmp on host
@@ -457,8 +477,10 @@ SELECT create_flow_download(
                         host_extract_dir = f"/home/tenroot/setup_platform/workdir/tmp/plaso_extract_{client_name}_{flow_id}"
                         zip_path = f"/velociraptor{export_path}"
 
-                        # Copy ZIP from velociraptor container for plaso processing
-                        logger.info(f"Copying ZIP for plaso processing...")
+                        logger.info("-" * 40)
+                        logger.info(f"[STEP 3/7] COPY ZIP FOR PLASO")
+                        logger.info("-" * 40)
+                        logger.info(f"Copying ZIP from Velociraptor container...")
                         additionals.funcs.run_subprocess(f"sudo rm -rf {extract_dir}", "", logger)
                         additionals.funcs.run_subprocess(f"sudo mkdir -p {extract_dir}", "", logger)
 
@@ -470,26 +492,71 @@ SELECT create_flow_download(
                             "", logger
                         )
 
-                        # Run plaso directly on ZIP file (no extraction needed)
-                        logger.info(f"Using ZIP file for plaso: {host_zip_path}")
+                        logger.info(f"[STEP 3/7] COMPLETE - ZIP file ready: {host_zip_path}")
 
                         # Generate timestamp for log files
                         log_datetime = datetime.now().strftime("%d-%m-%Y-%H-%M-%S")
                         plaso_dir = "/home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso"
 
-                        command1 = f"sudo docker run --rm -v {host_extract_dir}:{host_extract_dir}:ro -v {plaso_dir}/:/data --cpus='{cpus}' --memory='{ram}' --user root log2timeline/plaso log2timeline --workers {cpus} --status_view window --status_view_interval 60 --logfile /data/log2timeline_{client_name}_{log_datetime}.log --storage-file /data/{client_name}Artifacts.plaso {host_zip_path}"
+                        # Get date range and parsers from config
+                        date_range_start = row["Arguments"].get("DateRangeStart", "*")
+                        date_range_end = row["Arguments"].get("DateRangeEnd", "*")
+                        parsers = row["Arguments"].get("Parsers", "*")
+
+                        # Build log2timeline command with date filtering and parsers
+                        command1 = f"sudo docker run --rm -v {host_extract_dir}:{host_extract_dir}:ro -v {plaso_dir}/:/data --cpus='{cpus}' --memory='{ram}' --user root log2timeline/plaso log2timeline --workers {cpus} --status_view window --status_view_interval 60 --logfile /data/log2timeline_{client_name}_{log_datetime}.log"
+
+                        # Add parsers if specified (not wildcard)
+                        if parsers and parsers != "*":
+                            command1 += f" --parsers '{parsers}'"
+
+                        # Add storage file and source
+                        # Note: Date filtering is done in psort, not log2timeline
+                        command1 += f" --storage-file /data/{client_name}Artifacts.plaso {host_zip_path}"
+
+                        logger.info("-" * 40)
+                        logger.info(f"[STEP 4/7] LOG2TIMELINE (PLASO)")
+                        logger.info("-" * 40)
+                        logger.info(f"Date Range: {date_range_start} to {date_range_end if date_range_end != '*' else 'NOW'}")
+                        logger.info(f"Parsers: {parsers}")
+                        logger.info(f"CPU: {cpus}, Memory: {ram}")
+                        logger.info(f"Log file: log2timeline_{client_name}_{log_datetime}.log")
+
+                        # Build psort command to convert plaso to JSONL (bypasses Timesketch's internal psort bug)
+                        psort_command = f"sudo docker run --rm -v {plaso_dir}/:/data --cpus='{cpus}' --memory='{ram}' --user root log2timeline/plaso psort -o json_line -w /data/{client_name}Artifacts.jsonl"
+
+                        # Add storage file
+                        psort_command += f" /data/{client_name}Artifacts.plaso"
+
+                        # Add date filtering using plaso filter expression (not --slice which takes single ISO 8601 datetime)
+                        # Filter syntax: "date > 'YYYY-MM-DD' AND date < 'YYYY-MM-DD'"
+                        date_filter_parts = []
+                        if date_range_start and date_range_start != "*":
+                            date_filter_parts.append(f"date > '{date_range_start}'")
+                        if date_range_end and date_range_end != "*":
+                            date_filter_parts.append(f"date < '{date_range_end}'")
+                        else:
+                            # No end date specified - use current date
+                            current_date = datetime.now().strftime("%Y-%m-%d")
+                            date_filter_parts.append(f"date < '{current_date}'")
+
+                        if date_filter_parts:
+                            date_filter = " AND ".join(date_filter_parts)
+                            psort_command += f" \"{date_filter}\""
+
                         api = connect_timesketch_api(general_config, logger)
                         #Check if there existing sketch or not
                         row, command2 = get_command2(general_config, api, row, host_name, user_name, client_name, logger)
-                        logger.info("Removing previous artifacts.plaso")
+                        logger.info("Preparing environment for plaso...")
                         # Return after loading file
                         # additionals.funcs.run_subprocess(f"sudo docker run --rm -v /home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso/:/data alpine sh -c 'rm -f /data/{client_name}Artifacts.plaso'", "", logger)
                         # additionals.funcs.run_subprocess(f"sudo docker run --rm -v /home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso/:/data/ alpine sh -c 'rm -f /data/.timesketchrc'", "", logger)
                         # additionals.funcs.run_subprocess(f"sudo docker run --rm -v /home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso/:/data/ alpine sh -c 'rm -f /data/.timesketch.token'", "", logger)
                         additionals.funcs.run_subprocess(f"sudo rm -f /home/node/.timesketch.token", "", logger)
                         additionals.funcs.run_subprocess(f"sudo rm -f /home/node/.timesketchrc", "", logger)
-                        # Use /plaso/ path (backend container mount) not /data/ (plaso container mount)
-                        additionals.funcs.run_subprocess(f"sudo rm -f /plaso/{client_name}Artifacts.plaso", "", logger)
+                        # Delete old plaso and jsonl files to avoid "Output file already exists" error
+                        additionals.funcs.run_subprocess(f"sudo rm -f {plaso_dir}/{client_name}Artifacts.plaso", "", logger)
+                        additionals.funcs.run_subprocess(f"sudo rm -f {plaso_dir}/{client_name}Artifacts.jsonl", "", logger)
 
                         # Create .timesketchrc with SSL verification disabled for self-signed certificates
                         logger.info("Creating .timesketchrc config with SSL verification disabled")
@@ -504,28 +571,49 @@ verify = False
                             f.write(timesketch_config)
                         logger.info(f"Created {config_path} with verify=False (using root path)")
 
-                        logger.info("Running plaso!")
-                        # Return after loading file
+                        logger.info("Running log2timeline (this may take a while)...")
+                        logger.info(f"Full command: {command1}")
+                        plaso_start_time = time.time()
                         additionals.funcs.run_subprocess(command1,"Processing completed", logger)
+                        plaso_duration = int(time.time() - plaso_start_time)
+                        logger.info(f"[STEP 4/7] COMPLETE - log2timeline finished in {plaso_duration}s")
 
-                        # Run pinfo on the plaso file and save output to log
-                        logger.info("Running pinfo on plaso file...")
+                        logger.info("-" * 40)
+                        logger.info(f"[STEP 5/7] PINFO (PLASO FILE INFO)")
+                        logger.info("-" * 40)
                         logs_dir = "/home/tenroot/setup_platform/workdir/risx-mssp/backend/logs"
                         pinfo_command = f"sudo docker run --rm -v {plaso_dir}/:/data -v {logs_dir}/:/logs log2timeline/plaso pinfo -w /logs/pinfo_{client_name}_{log_datetime}.log /data/{client_name}Artifacts.plaso"
-
-                        #pinfo_command = f"sudo docker run --rm -v {plaso_dir}/:/data log2timeline/plaso pinfo -w /data/pinfo_{client_name}_{log_datetime}.log /data/{client_name}Artifacts.plaso"
+                        logger.info(f"Running pinfo to extract plaso file statistics...")
+                        logger.info(f"Full command: {pinfo_command}")
                         additionals.funcs.run_subprocess(pinfo_command, "", logger)
+                        logger.info(f"[STEP 5/7] COMPLETE - pinfo saved to: pinfo_{client_name}_{log_datetime}.log")
 
-                        #Wait for plaso
-                        logger.info("Waiting for plaso to finish!")
-                        #while is_plaso_running(logger):
-                         #   logger.info("log2timeline/plaso is still running. Checking again in 15 seconds...")
-                          #  time.sleep(15)
-                        # Run the second command
-                        logger.info("Running timesketech importer!")
+                        logger.info("-" * 40)
+                        logger.info(f"[STEP 6/7] PSORT (CONVERT TO JSONL)")
+                        logger.info("-" * 40)
+                        logger.info("Converting plaso to JSONL using psort (bypasses Timesketch winevtx bug)...")
+                        logger.info(f"Output: {client_name}Artifacts.jsonl")
+                        logger.info(f"Full command: {psort_command}")
+                        psort_start_time = time.time()
+                        additionals.funcs.run_subprocess(psort_command, "JSONL conversion completed", logger)
+                        psort_duration = int(time.time() - psort_start_time)
+                        logger.info(f"[STEP 6/7] COMPLETE - JSONL conversion finished in {psort_duration}s")
+
+                        logger.info("-" * 40)
+                        logger.info(f"[STEP 7/7] TIMESKETCH IMPORTER")
+                        logger.info("-" * 40)
+                        logger.info("Uploading JSONL to Timesketch...")
+                        logger.info(f"Sketch Name: {row['Arguments']['SketchName']}")
+                        logger.info(f"Timeline Name: {row['UniqueID']['TimelineID']}")
+                        logger.info(f"Full command: {command2}")
+                        importer_start_time = time.time()
                         additionals.funcs.run_subprocess(command2, "", logger)
+                        importer_duration = int(time.time() - importer_start_time)
+                        logger.info(f"[STEP 7/7] COMPLETE - Timesketch importer finished in {importer_duration}s")
 
-                        # Cleanup extracted files
+                        logger.info("-" * 40)
+                        logger.info("CLEANUP")
+                        logger.info("-" * 40)
                         logger.info(f"Cleaning up extracted files: {extract_dir}")
                         additionals.funcs.run_subprocess(f"sudo rm -rf {extract_dir}", "", logger)
 
@@ -554,371 +642,27 @@ verify = False
                     # Cleanup extracted files if they exist
                     if extract_dir:
                         logger.info(f"Cleaning up extracted files after error: {extract_dir}")
-                        additionals.funcs.run_subprocess(f"sudo rm -rf {extract_dir}", "", logger)
+                        #additionals.funcs.run_subprocess(f"sudo rm -rf {extract_dir}", "", logger)
                     #make_sketches_public(api, logger)
                     api.session.close()
 
-            #row["Status"] = "Hunting"
             row["Status"] = "Complete"
-            logger.info("Removing plaso containers!")
+            logger.info("=" * 60)
+            logger.info("TIMESKETCH PIPELINE COMPLETED SUCCESSFULLY")
+            logger.info("=" * 60)
+            logger.info("Cleaning up plaso containers...")
             additionals.funcs.run_subprocess('sudo docker ps -a -q --filter "ancestor=log2timeline/plaso" | sudo xargs -r docker rm -f',"", logger)
             return row
     except Exception as e:
-        logger.error("TimeSketch unknown error:" + str(e))
+        logger.error("=" * 60)
+        logger.error("TIMESKETCH PIPELINE FAILED")
+        logger.error("=" * 60)
+        logger.error(f"Error: {str(e)}")
+        logger.error(traceback.format_exc())
         row["Status"] = "Failed"
         row["Error"] = "Unknown error:" + str(e)
-        logger.info("Removing plaso containers!")
+        logger.info("Cleaning up plaso containers...")
         additionals.funcs.run_subprocess('sudo docker ps -a -q --filter "ancestor=log2timeline/plaso" | sudo xargs -r docker rm -f',"", logger)
         return row
 
 
-def start_kape_collection(row, general_config, logger):
-    # Here, based on the parsed arguments, you can call different functions
-    try:
-        logger.info("WhoAmI:" + str(subprocess.run(['whoami'], stdout=subprocess.PIPE, text=True).stdout.strip()))
-        if(is_plaso_running(logger)):
-            logger.error("Kape collection is already running. Let it finish and run again later")
-            row["Status"] = "Failed"
-            row["Error"] = "Kape collection is already running. Let it finish and run again later"
-            return row
-    
-        logger.info("Twwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww")
-        logger.info("Starting Kape collection for multiple clients")
-        config_path = os.path.join("modules", "Velociraptor", "dependencies", "api.config.yaml")
-        velociraptor_config = ""
-        with open(config_path, 'r') as f:
-            velociraptor_config = yaml.safe_load(f)
-
-        creds = grpc.ssl_channel_credentials(
-        root_certificates=velociraptor_config["ca_certificate"].encode("utf8"),
-        private_key=velociraptor_config["client_private_key"].encode("utf8"),
-        certificate_chain=velociraptor_config["client_cert"].encode("utf8"))
-        options = (('grpc.ssl_target_name_override', "VelociraptorServer",),)
-
-        # Establish a secure channel
-        with grpc.secure_channel(velociraptor_config["api_connection_string"], creds, options) as channel:
-            host_client_id_dict = modules.Velociraptor.VelociraptorScript.get_clients(logger, False)
-            logger.info("Current host_client_id_dict:" + str(host_client_id_dict))
-            logger.info("Running artifact")
-            logger.info("KapePopulation:" + str(row["Population"]))
-            
-            # Start running on all clients concurrently
-            collection_results = []
-            client_flows = []
-            
-            # First launch all the artifacts in parallel
-            for client in row["Population"]:
-                try:
-                    client_name = client["asset_string"]
-                    if(client_name in host_client_id_dict):
-                        logger.info("Client name:" + client_name)
-                        client_id = host_client_id_dict[client_name]
-                        logger.info(f"Timeout is {row['ArtifactTimeOutInMinutes']} minutes!")
-                        logger.info(f"Kape CPU limit: 50")
-                        cpu_limit = 50
-                        
-                        # Launch the artifact collection but don't wait for completion
-                        # Just get the flow ID
-                        stub = api_pb2_grpc.APIStub(channel)
-                        flow_id = run_kape_artifact(stub, client_id, row["Arguments"]["KapeCollection"], 
-                                           int(row["ArtifactTimeOutInMinutes"]), cpu_limit, logger)
-                        
-                        if flow_id:
-                            logger.info(f"Started flow for {client_name} with flowid: {flow_id}")
-                            
-                            # Track this client and flow
-                            client_flows.append({
-                                "client_name": client_name,
-                                "client_id": client_id,
-                                "flow_id": flow_id,
-                                "stub": stub,
-                                "status": "running"
-                            })
-                        else:
-                            logger.error(f"Failed to start artifact for {client_name}")
-                            collection_results.append({
-                                "client_name": client_name,
-                                "status": "error",
-                                "message": "Failed to start artifact collection"
-                            })
-                except Exception as e:
-                    logger.error(f"Error starting Kape collection for client {client_name}: {str(e)}")
-                    logger.error(traceback.format_exc())
-                    collection_results.append({
-                        "client_name": client_name,
-                        "status": "error",
-                        "message": f"Error: {str(e)}"
-                    })
-            
-            # Now wait for all the flows to complete - this is the monitoring phase
-            logger.info("All artifact collections started, now monitoring completion...")
-            
-            # Use the same start_time for all flows to enforce a global timeout
-            start_time = time.time()
-            global_timeout = int(row["ArtifactTimeOutInMinutes"]) * 60  # Convert minutes to seconds
-            
-            # Track which clients still need monitoring
-            pending_clients = list(client_flows)
-            
-            # Loop until all clients are done or timeout is reached
-            while pending_clients and (time.time() - start_time < global_timeout):
-                # Process each pending client
-                still_pending = []
-                
-                for client_flow in pending_clients:
-                    try:
-                        # Check flow state using the existing get_flow_state function
-                        state = get_flow_state(
-                            client_flow["stub"], 
-                            client_flow["client_id"], 
-                            client_flow["flow_id"], 
-                            global_timeout,
-                            logger
-                        )
-                        
-                        if state == "FINISHED":
-                            logger.info(f"Artifact for {client_flow['client_name']} completed successfully")
-                            # Wait a bit more to ensure uploads are fully flushed to disk
-                            logger.info("Waiting 10 seconds to ensure all uploads are flushed...")
-                            time.sleep(10)
-
-                            # Run plaso/Timesketch automation if SketchName is provided
-                            if row.get("Arguments", {}).get("SketchName"):
-                                try:
-                                    logger.info(f"Running plaso/Timesketch automation for {client_flow['client_name']}...")
-
-                                    client_name = client_flow["client_name"]
-                                    client_id = client_flow["client_id"]
-                                    flow_id = client_flow["flow_id"]
-
-                                    # Get CPU/Memory throttling settings
-                                    cpus = additionals.funcs.closest_cpu_percentage(int(row['Arguments'].get('CPUThrottling', 50)))
-                                    ram = additionals.funcs.closest_memory_percentage(int(row['Arguments'].get('MemoryThrottling', 50))) + "g"
-                                    logger.info("Number of CPUs:" + cpus)
-                                    logger.info("Number of Memory:" + ram)
-
-                                    # Export collection as ZIP using create_flow_download (decompresses zlib files)
-                                    logger.info(f"Exporting collection {flow_id} as ZIP for plaso processing...")
-                                    export_query = f"""
-SELECT create_flow_download(
-    client_id='{client_id}',
-    flow_id='{flow_id}',
-    wait=true,
-    expand_sparse=true
-) AS Export FROM scope()
-"""
-                                    stub = api_pb2_grpc.APIStub(channel)
-                                    export_request = api_pb2.VQLCollectorArgs(
-                                        max_wait=600,
-                                        Query=[api_pb2.VQLRequest(VQL=export_query)]
-                                    )
-
-                                    export_path = None
-                                    for response in stub.Query(export_request):
-                                        if response.Response:
-                                            logger.info(f"Export response: {response.Response}")
-                                            export_data = json.loads(response.Response)
-                                            if export_data and len(export_data) > 0:
-                                                export_info = export_data[0].get('Export', '')
-                                                # Export can be a string path or a dict with 'path' key
-                                                if isinstance(export_info, str):
-                                                    export_path = export_info
-                                                elif isinstance(export_info, dict):
-                                                    export_path = export_info.get('path', '')
-
-                                    if not export_path:
-                                        logger.error("Failed to export collection as ZIP")
-                                        raise Exception("Collection export failed")
-
-                                    # Remove fs: prefix if present
-                                    if export_path.startswith('fs:'):
-                                        export_path = export_path[3:]
-
-                                    logger.info(f"Collection exported to: {export_path}")
-
-                                    # Extract ZIP to temp directory for plaso
-                                    # Note: Container's /tmp maps to /home/tenroot/setup_platform/workdir/tmp on host
-                                    # Docker commands need host paths for volume mounts
-                                    extract_dir = f"/tmp/plaso_extract_{client_name}_{flow_id}"
-                                    host_extract_dir = f"/home/tenroot/setup_platform/workdir/tmp/plaso_extract_{client_name}_{flow_id}"
-                                    zip_path = f"/velociraptor{export_path}"
-
-                                    # Copy ZIP from velociraptor container for plaso processing
-                                    logger.info(f"Copying ZIP for plaso processing...")
-                                    additionals.funcs.run_subprocess(f"sudo rm -rf {extract_dir}", "", logger)
-                                    additionals.funcs.run_subprocess(f"sudo mkdir -p {extract_dir}", "", logger)
-
-                                    # Copy ZIP from velociraptor container (plaso can process zip directly)
-                                    zip_file_path = f"{extract_dir}/collection.zip"
-                                    host_zip_path = f"{host_extract_dir}/collection.zip"
-                                    additionals.funcs.run_subprocess(
-                                        f"sudo docker cp velociraptor:{zip_path} {zip_file_path}",
-                                        "", logger
-                                    )
-
-                                    # Run plaso directly on ZIP file (no extraction needed)
-                                    logger.info(f"Using ZIP file for plaso: {host_zip_path}")
-
-                                    # Generate timestamp for log files
-                                    log_datetime = datetime.now().strftime("%d-%m-%Y-%H-%M-%S")
-                                    plaso_dir = "/home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso"
-
-                                    command1 = f"sudo docker run --rm -v {host_extract_dir}:{host_extract_dir}:ro -v {plaso_dir}/:/data --cpus='{cpus}' --memory='{ram}' --user root log2timeline/plaso log2timeline --workers {cpus} --status_view window --status_view_interval 60 --logfile /data/log2timeline_{client_name}_{log_datetime}.log --storage-file /data/{client_name}Artifacts.plaso {host_zip_path}"
-
-                                    # Connect to Timesketch API
-                                    api = connect_timesketch_api(general_config, logger)
-
-                                    # Get the username and hostname
-                                    user_name = subprocess.run(['whoami'], stdout=subprocess.PIPE, text=True).stdout.strip()
-                                    host_name = subprocess.run(['uname', '-n'], stdout=subprocess.PIPE, text=True).stdout.strip()
-
-                                    # Get command2 for timesketch import
-                                    row, command2 = get_command2(general_config, api, row, host_name, user_name, client_name, logger)
-
-                                    # Clean up previous artifacts
-                                    logger.info("Removing previous artifacts.plaso")
-                                    additionals.funcs.run_subprocess(f"sudo rm -f /home/node/.timesketch.token", "", logger)
-                                    additionals.funcs.run_subprocess(f"sudo rm -f /home/node/.timesketchrc", "", logger)
-                                    # Use /plaso/ path (backend container mount) not /data/ (plaso container mount)
-                                    additionals.funcs.run_subprocess(f"sudo rm -f /plaso/{client_name}Artifacts.plaso", "", logger)
-
-                                    # Create .timesketchrc with SSL verification disabled
-                                    logger.info("Creating .timesketchrc config with SSL verification disabled")
-                                    timesketch_config = f"""[timesketch]
-host_uri = https://{general_config['ClientData']['API']['Timesketch']['IP']}/
-username = {general_config['ClientData']['API']['Timesketch']['Username']}
-auth_mode = userpass
-verify = False
-"""
-                                    config_path = "/home/node/.timesketchrc"
-                                    with open(config_path, 'w') as f:
-                                        f.write(timesketch_config)
-                                    logger.info(f"Created {config_path} with verify=False")
-
-                                    # Run plaso
-                                    logger.info("Running plaso!")
-                                    additionals.funcs.run_subprocess(command1, "Processing completed", logger)
-
-                                    # Run pinfo on the plaso file and save output to log
-                                    logger.info("Running pinfo on plaso file...")
-                                    logs_dir = "/home/tenroot/setup_platform/workdir/risx-mssp/backend/logs"
-                                    pinfo_command = f"sudo docker run --rm -v {plaso_dir}/:/data -v {logs_dir}/:/logs log2timeline/plaso pinfo -w /logs/pinfo_{client_name}_{log_datetime}.log /data/{client_name}Artifacts.plaso"
-
-                                    #pinfo_command = f"sudo docker run --rm -v {plaso_dir}/:/data log2timeline/plaso pinfo -w /data/pinfo_{client_name}_{log_datetime}.log /data/{client_name}Artifacts.plaso"
-                                    additionals.funcs.run_subprocess(pinfo_command, "", logger)
-
-                                    # Run timesketch importer
-                                    logger.info("Running timesketch importer!")
-                                    additionals.funcs.run_subprocess(command2, "", logger)
-
-                                    # Cleanup extracted files
-                                    logger.info(f"Cleaning up extracted files: {extract_dir}")
-                                    additionals.funcs.run_subprocess(f"sudo rm -rf {extract_dir}", "", logger)
-
-                                    # Wait and update sketch/timeline IDs
-                                    time.sleep(30)
-                                    logger.info("SketchID:" + str(row["UniqueID"]["SketchID"]))
-                                    logger.info("SketchName:" + str(row["Arguments"]["SketchName"]))
-                                    logger.info("TimeLine ID:" + row["UniqueID"]["TimelineID"])
-                                    if row["UniqueID"]["SketchID"] == row["Arguments"]["SketchName"]:
-                                        row["UniqueID"]["SketchID"] = get_sketch_id(api, row["Arguments"]["SketchName"], logger)
-
-                                    # Only fetch timeline ID if we have a valid sketch ID
-                                    if row["UniqueID"]["SketchID"] is not None:
-                                        row["UniqueID"]["TimelineID"] = get_timeline_id(api, row["UniqueID"]["SketchID"], row["UniqueID"]["TimelineID"], logger)
-                                        logger.info(row["UniqueID"]["TimelineID"])
-                                    else:
-                                        logger.warning(f"Could not get sketch ID for '{row['Arguments']['SketchName']}' - sketch may not exist yet or timesketch_importer is still processing")
-                                        logger.info("Timeline import was initiated - check Timesketch UI for status")
-                                    api.session.close()
-
-                                    collection_results.append({
-                                        "client_name": client_flow["client_name"],
-                                        "status": "complete",
-                                        "flow_id": client_flow["flow_id"],
-                                        "message": "Collection and Timesketch import successful"
-                                    })
-                                except Exception as plaso_error:
-                                    logger.error(f"Plaso/Timesketch automation failed for {client_flow['client_name']}: {str(plaso_error)}")
-                                    logger.error(traceback.format_exc())
-                                    # Cleanup on error
-                                    if 'extract_dir' in locals():
-                                        additionals.funcs.run_subprocess(f"sudo rm -rf {extract_dir}", "", logger)
-                                    collection_results.append({
-                                        "client_name": client_flow["client_name"],
-                                        "status": "partial",
-                                        "flow_id": client_flow["flow_id"],
-                                        "message": f"Collection successful but Timesketch import failed: {str(plaso_error)}"
-                                    })
-                            else:
-                                # No SketchName provided, just collection
-                                collection_results.append({
-                                    "client_name": client_flow["client_name"],
-                                    "status": "complete",
-                                    "flow_id": client_flow["flow_id"],
-                                    "message": "Collection successful"
-                                })
-
-                            client_flow["status"] = "complete"
-                            # Don't add to still_pending
-                        elif state == "FAILED" or state == "ERROR":
-                            logger.error(f"Artifact for {client_flow['client_name']} failed")
-                            collection_results.append({
-                                "client_name": client_flow["client_name"],
-                                "status": "error",
-                                "flow_id": client_flow["flow_id"],
-                                "message": f"Collection failed with state: {state}"
-                            })
-                            client_flow["status"] = "error"
-                            # Don't add to still_pending
-                        else:
-                            # Still running or unknown state, keep monitoring
-                            logger.info(f"Artifact for {client_flow['client_name']} is still running (state: {state})")
-                            still_pending.append(client_flow)
-                    except Exception as e:
-                        logger.error(f"Error checking status for {client_flow['client_name']}: {str(e)}")
-                        # Keep checking on error
-                        still_pending.append(client_flow)
-                
-                # Update pending clients
-                pending_clients = still_pending
-                
-                # If we still have pending clients, wait before checking again
-                if pending_clients:
-                    logger.info(f"Waiting for {len(pending_clients)} clients to complete. Checking again in 30 seconds...")
-                    time.sleep(30)
-            
-            # Handle any clients that are still pending after the loop exits
-            for client_flow in pending_clients:
-                logger.warning(f"Artifact collection for {client_flow['client_name']} did not complete within the timeout")
-                collection_results.append({
-                    "client_name": client_flow["client_name"],
-                    "status": "timeout",
-                    "flow_id": client_flow["flow_id"],
-                    "message": "Collection timed out"
-                })
-            
-            # Update row with results
-            row["KapeResults"] = collection_results
-            success_count = sum(1 for result in collection_results if result["status"] == "complete")
-            error_count = len(collection_results) - success_count
-            
-            if error_count > 0:
-                row["Status"] = "Partial Success" if success_count > 0 else "Failed"
-                row["Error"] = f"{error_count} client(s) failed or timed out during collection"
-            else:
-                row["Status"] = "Complete"
-
-            # Cleanup any leftover plaso containers
-            logger.info("Removing plaso containers!")
-            additionals.funcs.run_subprocess('sudo docker ps -a -q --filter "ancestor=log2timeline/plaso" | sudo xargs -r docker rm -f', "", logger)
-            return row
-    except Exception as e:
-        logger.error("Kape collection unknown error:" + str(e))
-        logger.error(traceback.format_exc())
-        row["Status"] = "Failed"
-        row["Error"] = "Unknown error:" + str(e)
-        # Cleanup any leftover plaso containers
-        logger.info("Removing plaso containers!")
-        additionals.funcs.run_subprocess('sudo docker ps -a -q --filter "ancestor=log2timeline/plaso" | sudo xargs -r docker rm -f', "", logger)
-        return row
