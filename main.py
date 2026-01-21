@@ -80,11 +80,11 @@ def main():
             additionals.funcs.connect_db_update_config(env_dict, previous_config_date, config_data, logger)
         # Kape module deprecated - use TimeSketch module instead (parallel artifact collection + sequential plaso)
         # if request["ModuleName"] == "Kape":
-        #     request = modules.Velociraptor.AddToTimeSketch.start_kape_collection(request, config_data, logger)
+        #     request = modules.Velociraptor.AddToTimeSketch.start_timesketch(request, config_data, logger)
         #     additionals.funcs.connect_db_update_config(env_dict, previous_config_date, config_data, logger)
         if request["ModuleName"] == "TimeSketch":
-            # Uses start_kape_collection: parallel artifact collection, sequential plaso processing
-            request = modules.Velociraptor.AddToTimeSketch.start_kape_collection(request, config_data, logger)
+            # Uses start_timesketch: parallel artifact collection, sequential plaso processing
+            request = modules.Velociraptor.AddToTimeSketch.start_timesketch(request, config_data, logger)
             additionals.funcs.connect_db_update_config(env_dict, previous_config_date, config_data, logger)
 
 
