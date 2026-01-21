@@ -504,7 +504,7 @@ SELECT create_flow_download(
                         parsers = row["Arguments"].get("Parsers", "*")
 
                         # Build log2timeline command with date filtering and parsers
-                        command1 = f"sudo docker run --rm -v {host_extract_dir}:{host_extract_dir}:ro -v {plaso_dir}/:/data --cpus='{cpus}' --memory='{ram}' --user root log2timeline/plaso log2timeline --workers {cpus} --status_view window --status_view_interval 60 --logfile /data/log2timeline_{client_name}_{log_datetime}.log"
+                        command1 = f"sudo docker run --rm -v {host_extract_dir}:{host_extract_dir}:ro -v {plaso_dir}/:/data --cpus='{cpus}' --memory='{ram}' --user root log2timeline/plaso log2timeline --parsers '!winevtx' --workers {cpus} --status_view window --status_view_interval 60 --logfile /data/log2timeline_{client_name}_{log_datetime}.log"
 
                         # Add parsers if specified (not wildcard)
                         if parsers and parsers != "*":
