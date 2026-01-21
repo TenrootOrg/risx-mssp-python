@@ -510,7 +510,10 @@ verify = False
 
                         # Run pinfo on the plaso file and save output to log
                         logger.info("Running pinfo on plaso file...")
-                        pinfo_command = f"sudo docker run --rm -v {plaso_dir}/:/data log2timeline/plaso pinfo -w /data/pinfo_{client_name}_{log_datetime}.log /data/{client_name}Artifacts.plaso"
+                        logs_dir = "/home/tenroot/setup_platform/workdir/risx-mssp/backend/logs"
+                        pinfo_command = f"sudo docker run --rm -v {plaso_dir}/:/data -v {logs_dir}/:/logs log2timeline/plaso pinfo -w /logs/pinfo_{client_name}_{log_datetime}.log /data/{client_name}Artifacts.plaso"
+
+                        #pinfo_command = f"sudo docker run --rm -v {plaso_dir}/:/data log2timeline/plaso pinfo -w /data/pinfo_{client_name}_{log_datetime}.log /data/{client_name}Artifacts.plaso"
                         additionals.funcs.run_subprocess(pinfo_command, "", logger)
 
                         #Wait for plaso
@@ -798,7 +801,10 @@ verify = False
 
                                     # Run pinfo on the plaso file and save output to log
                                     logger.info("Running pinfo on plaso file...")
-                                    pinfo_command = f"sudo docker run --rm -v {plaso_dir}/:/data log2timeline/plaso pinfo -w /data/pinfo_{client_name}_{log_datetime}.log /data/{client_name}Artifacts.plaso"
+                                    logs_dir = "/home/tenroot/setup_platform/workdir/risx-mssp/backend/logs"
+                                    pinfo_command = f"sudo docker run --rm -v {plaso_dir}/:/data -v {logs_dir}/:/logs log2timeline/plaso pinfo -w /logs/pinfo_{client_name}_{log_datetime}.log /data/{client_name}Artifacts.plaso"
+
+                                    #pinfo_command = f"sudo docker run --rm -v {plaso_dir}/:/data log2timeline/plaso pinfo -w /data/pinfo_{client_name}_{log_datetime}.log /data/{client_name}Artifacts.plaso"
                                     additionals.funcs.run_subprocess(pinfo_command, "", logger)
 
                                     # Run timesketch importer
