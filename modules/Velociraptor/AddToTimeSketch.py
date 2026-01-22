@@ -278,13 +278,13 @@ def get_command2(config, api, row, host_name, user_name, client_name, logger):
     timesketch_importer_path = ""
     PathToJsonl = ""
     # When the shell is inside a container the user name will always be node else its dev version
-    # Using JSONL file instead of plaso to bypass Timesketch's internal psort winevtx bug
+    # Using plaso file directly - Timesketch will process it internally
     if(user_name == "node"):
         timesketch_importer_path = f"/usr/local/bin/timesketch_importer"
-        PathToJsonl = f"/plaso/{client_name}Artifacts.jsonl"
+        PathToPlaso = f"/plaso/{client_name}Artifacts.plaso"
     else:
         timesketch_importer_path = f"/home/{user_name}/.local/bin/timesketch_importer"
-        PathToJsonl = f"/home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso/{client_name}Artifacts.jsonl"
+        PathToPlaso = f"/home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso/{client_name}Artifacts.plaso"
 
     # Add a check for sketch_id and construct command
     # TimeSketch is accessible at root path https://{ip}/ (not /timesketch subpath due to known subpath issues)
@@ -292,11 +292,11 @@ def get_command2(config, api, row, host_name, user_name, client_name, logger):
     if sketch_id is not None:
         logger.info(f"Sketch with the same name found. Sketchid: {sketch_id}")
         row["UniqueID"] = {"SketchID": sketch_id, "TimelineID": timeline_name}
-        return row, f'{timesketch_importer_path} -u {username} -p {password} --host https://{ip}/ --timeline_name {timeline_name} --sketch_id {sketch_id} {PathToJsonl} --quick'
+        return row, f'{timesketch_importer_path} -u {username} -p {password} --host https://{ip}/ --timeline_name {timeline_name} --sketch_id {sketch_id} {PathToPlaso}'
     else:
         logger.info(f"Sketch with the same name not found. Creating new Sketch: {sketch_name}")
         row["UniqueID"] = {"SketchID": sketch_name, "TimelineID": timeline_name}
-        return row, f'{timesketch_importer_path} -u {username} -p {password} --host https://{ip}/ --timeline_name {timeline_name} --sketch_name {sketch_name} {PathToJsonl} --quick'
+        return row, f'{timesketch_importer_path} -u {username} -p {password} --host https://{ip}/ --timeline_name {timeline_name} --sketch_name {sketch_name} {PathToPlaso}'
 
 
 def get_sketch_id(api, sketch_name, logger):
@@ -364,6 +364,15 @@ def start_timesketch(row, general_config, logger):
             row["Status"] = "Failed"
             row["Error"] = "Timesketch plaso is already running. Let it finish and run again later"
             return row
+
+        # Clean plaso folder at the beginning of each run
+        user_name = subprocess.run(['whoami'], stdout=subprocess.PIPE, text=True).stdout.strip()
+        if user_name == "node":
+            plaso_cleanup_dir = "/plaso"
+        else:
+            plaso_cleanup_dir = "/home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso"
+        logger.info(f"Cleaning plaso folder before starting: {plaso_cleanup_dir}")
+        additionals.funcs.run_subprocess(f"rm -rf {plaso_cleanup_dir}/*", "", logger)
     
         logger.info("=" * 60)
         logger.info("TIMESKETCH PIPELINE STARTED")
@@ -522,11 +531,11 @@ SELECT create_flow_download(
                         logger.info(f"CPU: {cpus}, Memory: {ram}")
                         logger.info(f"Log file: log2timeline_{client_name}_{log_datetime}.log")
 
-                        # Build psort command to convert plaso to JSONL (bypasses Timesketch's internal psort bug)
-                        psort_command = f"sudo docker run --rm -v {plaso_dir}/:/data --cpus='{cpus}' --memory='{ram}' --user root log2timeline/plaso psort -o json_line -w /data/{client_name}Artifacts.jsonl"
+                        # SKIPPED: psort conversion - uploading plaso file directly
+                        # SKIPPED: psort_command = f"sudo docker run --rm -v {plaso_dir}/:/data --cpus='{cpus}' --memory='{ram}' --user root log2timeline/plaso psort -o l2tcsv -w /data/{client_name}Artifacts.csv"
 
                         # Add storage file
-                        psort_command += f" /data/{client_name}Artifacts.plaso"
+                        # SKIPPED: psort_command += f" /data/{client_name}Artifacts.plaso"
 
                         # Add date filtering using plaso filter expression (not --slice which takes single ISO 8601 datetime)
                         # Filter syntax: "date > 'YYYY-MM-DD' AND date < 'YYYY-MM-DD'"
@@ -542,7 +551,7 @@ SELECT create_flow_download(
 
                         if date_filter_parts:
                             date_filter = " AND ".join(date_filter_parts)
-                            psort_command += f" \"{date_filter}\""
+                            # SKIPPED: psort_command += f" \"{date_filter}\"" - uploading plaso directly
 
                         api = connect_timesketch_api(general_config, logger)
                         #Check if there existing sketch or not
@@ -555,8 +564,8 @@ SELECT create_flow_download(
                         additionals.funcs.run_subprocess(f"sudo rm -f /home/node/.timesketch.token", "", logger)
                         additionals.funcs.run_subprocess(f"sudo rm -f /home/node/.timesketchrc", "", logger)
                         # Delete old plaso and jsonl files to avoid "Output file already exists" error
-                        additionals.funcs.run_subprocess(f"sudo rm -f {plaso_dir}/{client_name}Artifacts.plaso", "", logger)
-                        additionals.funcs.run_subprocess(f"sudo rm -f {plaso_dir}/{client_name}Artifacts.jsonl", "", logger)
+                        # KEEP plaso file for upload: additionals.funcs.run_subprocess(f"sudo rm -f {plaso_dir}/{client_name}Artifacts.plaso", "", logger)
+                        # SKIPPED: additionals.funcs.run_subprocess(f"sudo rm -f {plaso_dir}/{client_name}Artifacts.csv", "", logger)
 
                         # Create .timesketchrc with SSL verification disabled for self-signed certificates
                         logger.info("Creating .timesketchrc config with SSL verification disabled")
@@ -589,20 +598,20 @@ verify = False
                         logger.info(f"[STEP 5/7] COMPLETE - pinfo saved to: pinfo_{client_name}_{log_datetime}.log")
 
                         logger.info("-" * 40)
-                        logger.info(f"[STEP 6/7] PSORT (CONVERT TO JSONL)")
+                        logger.info(f"[STEP 6/7] SKIPPED - Using plaso directly")
                         logger.info("-" * 40)
-                        logger.info("Converting plaso to JSONL using psort (bypasses Timesketch winevtx bug)...")
-                        logger.info(f"Output: {client_name}Artifacts.jsonl")
-                        logger.info(f"Full command: {psort_command}")
+                        logger.info("Skipping psort - uploading plaso file directly to Timesketch")
+                        logger.info(f"Using: {client_name}Artifacts.plaso")
+                        # logger.info(f"Full command: {psort_command}")  # SKIPPED
                         psort_start_time = time.time()
-                        additionals.funcs.run_subprocess(psort_command, "JSONL conversion completed", logger)
+                        # SKIPPED: additionals.funcs.run_subprocess(psort_command, "CSV conversion completed", logger)
                         psort_duration = int(time.time() - psort_start_time)
-                        logger.info(f"[STEP 6/7] COMPLETE - JSONL conversion finished in {psort_duration}s")
+                        logger.info(f"[STEP 6/7] SKIPPED - No conversion needed")
 
                         logger.info("-" * 40)
                         logger.info(f"[STEP 7/7] TIMESKETCH IMPORTER")
                         logger.info("-" * 40)
-                        logger.info("Uploading JSONL to Timesketch...")
+                        logger.info("Uploading plaso file to Timesketch...")
                         logger.info(f"Sketch Name: {row['Arguments']['SketchName']}")
                         logger.info(f"Timeline Name: {row['UniqueID']['TimelineID']}")
                         logger.info(f"Full command: {command2}")
@@ -652,6 +661,8 @@ verify = False
             logger.info("=" * 60)
             logger.info("Cleaning up plaso containers...")
             additionals.funcs.run_subprocess('sudo docker ps -a -q --filter "ancestor=log2timeline/plaso" | sudo xargs -r docker rm -f',"", logger)
+            logger.info(f"Cleaning plaso folder: {plaso_cleanup_dir}")
+            additionals.funcs.run_subprocess(f"rm -rf {plaso_cleanup_dir}/*", "", logger)
             return row
     except Exception as e:
         logger.error("=" * 60)
@@ -663,6 +674,13 @@ verify = False
         row["Error"] = "Unknown error:" + str(e)
         logger.info("Cleaning up plaso containers...")
         additionals.funcs.run_subprocess('sudo docker ps -a -q --filter "ancestor=log2timeline/plaso" | sudo xargs -r docker rm -f',"", logger)
+        logger.info("Cleaning plaso folder...")
+        user_name = subprocess.run(['whoami'], stdout=subprocess.PIPE, text=True).stdout.strip()
+        if user_name == "node":
+            plaso_cleanup_dir = "/plaso"
+        else:
+            plaso_cleanup_dir = "/home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso"
+        additionals.funcs.run_subprocess(f"rm -rf {plaso_cleanup_dir}/*", "", logger)
         return row
 
 
