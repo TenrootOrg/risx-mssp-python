@@ -512,13 +512,13 @@ SELECT create_flow_download(
                         date_range_end = row["Arguments"].get("DateRangeEnd", "*")
                         parsers = row["Arguments"].get("Parsers", "*")
 
-                        # Build log2timeline command with date filtering and parsers
-                        command1 = f"sudo docker run --rm -v {host_extract_dir}:{host_extract_dir}:ro -v {plaso_dir}/:/data --cpus='{cpus}' --memory='{ram}' --user root log2timeline/plaso log2timeline --parsers '!winevtx' --workers {cpus} --status_view window --status_view_interval 60 --logfile /data/log2timeline_{client_name}_{log_datetime}.log"
-
-                        # Add parsers if specified (not wildcard)
+                        # Build log2timeline command - always exclude winevtx (causes Timesketch psort crash)
+                        # Combine user parsers with !winevtx exclusion
                         if parsers and parsers != "*":
-                            command1 += f" --parsers '{parsers}'"
-
+                            parser_arg = f"{parsers},!winevtx"
+                        else:
+                            parser_arg = "!winevtx"
+                        command1 = f"sudo docker run --rm -v {host_extract_dir}:{host_extract_dir}:ro -v {plaso_dir}/:/data --cpus='{cpus}' --memory='{ram}' --user root log2timeline/plaso log2timeline --parsers '{parser_arg}' --workers {cpus} --status_view window --status_view_interval 60 --logfile /data/log2timeline_{client_name}_{log_datetime}.log"
                         # Add storage file and source
                         # Note: Date filtering is done in psort, not log2timeline
                         command1 += f" --storage-file /data/{client_name}Artifacts.plaso {host_zip_path}"
