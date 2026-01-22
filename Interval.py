@@ -551,6 +551,13 @@ async def download_velociraptor_tools(logger):
         "Windows.Forensics.PersistenceSniper",
     ]
 
+    # Tools that need force re-download (corrupted/wrong content in inventory)
+    # These tools had "unzip: unknown file type" errors due to bad downloads
+    force_redownload_tools = [
+        "PSniper",
+        "HardeningKittyZip",
+    ]
+
     try:
         # Step 1: Ensure Velociraptor collector binaries are configured by running ToolDependencies
         logger.info("Running Server.Internal.ToolDependencies to configure Velociraptor binaries...")
@@ -618,10 +625,14 @@ async def download_velociraptor_tools(logger):
             # Check if tool is already downloaded locally
             # When downloaded locally, serve_url contains '/public/' (local filestore path)
             # and filestore_path + hash should be set
-            if serve_url and '/public/' in serve_url and filestore_path and tool_hash:
+            # Skip this check for tools in force_redownload_tools (need fresh download)
+            if tool_name not in force_redownload_tools and serve_url and '/public/' in serve_url and filestore_path and tool_hash:
                 logger.debug(f"Tool '{tool_name}' already available locally, skipping")
                 tools_already_local += 1
                 continue
+            
+            if tool_name in force_redownload_tools:
+                logger.info(f"Force re-downloading tool '{tool_name}' (was in force_redownload list)")
 
             try:
                 # Download tool using http_client and register with inventory_add
@@ -635,7 +646,7 @@ async def download_velociraptor_tools(logger):
                 download_and_add_query = f"""
                 LET download <= SELECT Content FROM http_client(
                     url="{url}",
-                    tempfile_extension=".tmp"
+                    tempfile_extension=".zip", headers=dict(`Accept`="application/octet-stream")
                 )
                 LET add_result = if(
                     condition=download[0].Content,
