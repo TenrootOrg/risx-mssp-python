@@ -539,7 +539,7 @@ def run_hunt(query, connection, stub, logger):
 
 def run_artifact(row, logger):
     artifact_dict = {
-        "PersistenceSniper": "Exchange.Windows.Forensics.PersistenceSniper",
+        "PersistenceSniper": "Windows.Forensics.PersistenceSniper",
         "HardeningKitty": "Exchange.Windows.HardeningKitty",
         "Hayabusa": "Windows.Hayabusa.Rules",
         "BestPractice": "BestPractice",
