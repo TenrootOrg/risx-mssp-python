@@ -456,6 +456,7 @@ async def download_plaso_image(logger):
     """
     Downloads the log2timeline/plaso Docker image for offline/air-gapped environments.
     This image is required for timeline processing in Timesketch integration.
+    Creates a fixed image with winevtx bug fix for local psort.
     """
     import subprocess as sp
     try:
@@ -471,20 +472,137 @@ async def download_plaso_image(logger):
 
         if check_result.stdout and 'log2timeline/plaso' in check_result.stdout:
             logger.info("log2timeline/plaso image already exists locally, skipping download")
-            return True
+        else:
+            logger.info("Pulling log2timeline/plaso:latest Docker image (this may take a while)...")
 
-        logger.info("Pulling log2timeline/plaso:latest Docker image (this may take a while)...")
+            # Pull the image using the existing run_subprocess which handles logging
+            await asyncio.to_thread(
+                lambda: additionals.funcs.run_subprocess(
+                    "sudo docker pull log2timeline/plaso:latest",
+                    "Downloaded newer image",
+                    logger
+                )
+            )
 
-        # Pull the image using the existing run_subprocess which handles logging
-        await asyncio.to_thread(
-            lambda: additionals.funcs.run_subprocess(
-                "sudo docker pull log2timeline/plaso:latest",
-                "Downloaded newer image",
-                logger
+            logger.info("log2timeline/plaso Docker image downloaded successfully")
+
+        # Fix winevtx file - Plaso 20250918 crashes when exporting Windows Event Logs
+        # Official fix from PR #5023: https://github.com/log2timeline/plaso/pull/5023
+        # Issue #4988: https://github.com/log2timeline/plaso/issues/4988
+        # Commits: 5776ea0, ea61196
+        # Fix: Add null check for self._storage_reader before _ReadParameterMessageString
+
+        fix_script = '''
+file_path = "/usr/lib/python3/dist-packages/plaso/output/winevt_rc.py"
+with open(file_path, "r") as f:
+    content = f.read()
+
+fixes_applied = 0
+
+# Fix 1: Official fix from PR #5023 - check self._storage_reader before _ReadParameterMessageString
+# This prevents crash in FormatEventValues when storage_reader is None
+old_line1 = """      message_string = self._ReadParameterMessageString(
+          self._storage_reader, provider_identifier, log_source,
+          message_identifier)"""
+fix_code1 = """      # FIX: PR #5023 - check self._storage_reader before calling _ReadParameterMessageString
+      if self._storage_reader:
+        message_string = self._ReadParameterMessageString(
+            self._storage_reader, provider_identifier, log_source,
+            message_identifier)"""
+
+if old_line1 in content:
+    content = content.replace(old_line1, fix_code1, 1)
+    print("Fix 1 (PR #5023 _ReadParameterMessageString) applied")
+    fixes_applied += 1
+elif "if self._storage_reader:" in content and "_ReadParameterMessageString" in content:
+    print("Fix 1 (PR #5023) already applied")
+else:
+    print("Fix 1: Could not find target line (may be different plaso version)")
+
+# Fix 2: Add null check in _ReadEnvironmentVariables method (additional safety)
+old_line2 = "    self._environment_variables = list(storage_reader.GetAttributeContainers("
+fix_code2 = """    # FIX: Add null check to prevent AttributeError when storage_reader is None
+    if storage_reader is None:
+        self._environment_variables = []
+        return
+    self._environment_variables = list(storage_reader.GetAttributeContainers("""
+
+if old_line2 in content:
+    content = content.replace(old_line2, fix_code2, 1)
+    print("Fix 2 (_ReadEnvironmentVariables null check) applied")
+    fixes_applied += 1
+elif "if storage_reader is None:" in content:
+    print("Fix 2 already applied")
+else:
+    print("Fix 2: Could not find target line")
+
+if fixes_applied > 0:
+    with open(file_path, "w") as f:
+        f.write(content)
+    print(f"Total {fixes_applied} fix(es) written to file")
+else:
+    print("No fixes needed or all already applied")
+'''
+
+        # Create fixed log2timeline/plaso:fixed image for local psort
+        logger.info("Creating log2timeline/plaso:fixed image...")
+
+        # Check if fixed image already exists
+        check_fixed = await asyncio.to_thread(
+            lambda: sp.run(
+                ["sudo", "docker", "images", "log2timeline/plaso:fixed", "--format", "{{.Repository}}:{{.Tag}}"],
+                capture_output=True, text=True
             )
         )
 
-        logger.info("log2timeline/plaso Docker image downloaded successfully")
+        if check_fixed.stdout and 'log2timeline/plaso:fixed' in check_fixed.stdout:
+            logger.info("log2timeline/plaso:fixed image already exists")
+        else:
+            container_name = "plaso_fix_temp"
+
+            # Remove any existing temp container
+            await asyncio.to_thread(
+                lambda: sp.run(["sudo", "docker", "rm", "-f", container_name], capture_output=True, text=True)
+            )
+
+            # Start container from base image (as root to allow file modifications)
+            await asyncio.to_thread(
+                lambda: sp.run(
+                    ["sudo", "docker", "run", "-d", "--name", container_name,
+                     "--user", "root", "--entrypoint", "tail", "log2timeline/plaso:latest", "-f", "/dev/null"],
+                    capture_output=True, text=True
+                )
+            )
+
+            # Wait for container to be ready
+            await asyncio.sleep(2)
+
+            # Apply fix inside container
+            fix_image_result = await asyncio.to_thread(
+                lambda: sp.run(
+                    ["sudo", "docker", "exec", container_name, "python3", "-c", fix_script],
+                    capture_output=True, text=True
+                )
+            )
+            logger.info(f"Plaso image fix result: {fix_image_result.stdout.strip()}")
+            if fix_image_result.stderr:
+                logger.warning(f"Plaso fix stderr: {fix_image_result.stderr.strip()}")
+
+            # Commit as fixed image (restore original entrypoint)
+            await asyncio.to_thread(
+                lambda: sp.run(
+                    ["sudo", "docker", "commit", "--change", "ENTRYPOINT [\"/usr/local/bin/plaso-switch.sh\"]",
+                     container_name, "log2timeline/plaso:fixed"],
+                    capture_output=True, text=True
+                )
+            )
+
+            # Cleanup temp container
+            await asyncio.to_thread(
+                lambda: sp.run(["sudo", "docker", "rm", "-f", container_name], capture_output=True, text=True)
+            )
+
+            logger.info("log2timeline/plaso:fixed image created successfully")
         return True
 
     except Exception as e:
