@@ -733,13 +733,13 @@ verify = False
         logger.info("Cleaning up plaso containers...")
         additionals.funcs.run_subprocess('sudo docker ps -a -q --filter "ancestor=log2timeline/plaso" | sudo xargs -r docker rm -f',"", logger)
         # DEBUG: Comment out plaso folder cleanup to allow debugging
-        # logger.info("Cleaning plaso folder...")
-        # user_name = subprocess.run(['whoami'], stdout=subprocess.PIPE, text=True).stdout.strip()
-        # if user_name == "node":
-        #     plaso_cleanup_dir = "/plaso"
-        # else:
-        #     plaso_cleanup_dir = "/home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso"
-        # additionals.funcs.run_subprocess(f"rm -rf {plaso_cleanup_dir}/*", "", logger)
+        logger.info("Cleaning plaso folder...")
+        user_name = subprocess.run(['whoami'], stdout=subprocess.PIPE, text=True).stdout.strip()
+        if user_name == "node":
+            plaso_cleanup_dir = "/plaso"
+        else:
+            plaso_cleanup_dir = "/home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso"
+        additionals.funcs.run_subprocess(f"rm -rf {plaso_cleanup_dir}/*", "", logger)
         return row
 
 
