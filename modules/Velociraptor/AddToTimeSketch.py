@@ -719,8 +719,8 @@ verify = False
             logger.info("Cleaning up plaso containers...")
             additionals.funcs.run_subprocess('sudo docker ps -a -q --filter "ancestor=log2timeline/plaso" | sudo xargs -r docker rm -f',"", logger)
             # DEBUG: Comment out plaso folder cleanup to allow debugging
-            # logger.info(f"Cleaning plaso folder: {plaso_cleanup_dir}")
-            # additionals.funcs.run_subprocess(f"rm -rf {plaso_cleanup_dir}/*", "", logger)
+            logger.info(f"Cleaning plaso folder: {plaso_cleanup_dir}")
+            additionals.funcs.run_subprocess(f"rm -rf {plaso_cleanup_dir}/*", "", logger)
             return row
     except Exception as e:
         logger.error("=" * 60)
