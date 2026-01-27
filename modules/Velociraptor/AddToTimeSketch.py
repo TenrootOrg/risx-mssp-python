@@ -611,6 +611,9 @@ SELECT create_flow_download(
                         # Get parsers from config
                         parsers = row["Arguments"].get("Parsers", "*")
 
+                        # Get number of workers from Arguments (default: 2)
+                        num_workers = row["Arguments"].get("NumberOfWorkers", 2)
+
                         # Build log2timeline command - always exclude winevtx (causes Timesketch psort crash)
                         # Combine user parsers with !winevtx exclusion
                         # NOTE: winevtx exclusion disabled - bug fix applied to plaso image
@@ -619,7 +622,7 @@ SELECT create_flow_download(
                         # else:
                         #     parser_arg = "!winevtx"
                         parser_arg = parsers if parsers else "*"
-                        command1 = f"sudo docker run --rm -v {host_extract_dir}:{host_extract_dir}:ro -v {plaso_host_dir}/:/data --cpus='{cpus}' --memory='{ram}' --user root log2timeline/plaso:latest log2timeline --parsers '{parser_arg}' --workers {cpus} --status_view window --status_view_interval 60 --logfile /data/log2timeline_{client_name}_{log_datetime}.log"
+                        command1 = f"sudo docker run --rm -v {host_extract_dir}:{host_extract_dir}:ro -v {plaso_host_dir}/:/data --cpus='{cpus}' --memory='{ram}' --user root log2timeline/plaso:latest log2timeline --parsers '{parser_arg}' --workers {num_workers} --status_view window --status_view_interval 60 --logfile /data/log2timeline_{client_name}_{log_datetime}.log"
                         # Add storage file and source
                         # Note: Full plaso file is uploaded to Timesketch - use Timesketch queries for date filtering
                         command1 += f" --storage-file /data/{client_name}Artifacts.plaso {host_zip_path}"
@@ -628,7 +631,7 @@ SELECT create_flow_download(
                         logger.info(f"[STEP 4/6] LOG2TIMELINE (PLASO)")
                         logger.info("-" * 40)
                         logger.info(f"Parsers: {parsers}")
-                        logger.info(f"CPU: {cpus}, Memory: {ram}")
+                        logger.info(f"CPU: {cpus}, Memory: {ram}, Workers: {num_workers}")
                         logger.info(f"Log file: log2timeline_{client_name}_{log_datetime}.log")
 
                         # Connect to Timesketch API early to get/create sketch
