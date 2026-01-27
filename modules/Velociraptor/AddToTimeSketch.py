@@ -17,6 +17,7 @@ import os
 import ssl
 import warnings
 from timesketch_api_client import client
+from timesketch_import_client import importer as ts_importer
 import urllib3
 
 
@@ -261,41 +262,123 @@ def run_artifact_on_client(channel, client_id, kape_collection, timeout, cpu_lim
         time.sleep(10)  # Wait 10 seconds before checking again
     return
 
-def get_command2(config, api, row, host_name, user_name, client_name, logger):
-    formatted_datetime = datetime.now().strftime("%d-%m-%Y-%H-%M-%S")
-    #formatted_datetime = datetime.now().strftime("%Y-%d-%m_%H:%M")
-    username = config['ClientData']['API']['Timesketch']['Username']
-    password = config['ClientData']['API']['Timesketch']['Password']
-    formatted_future_datetime = datetime.now().strftime("%d-%m-%Y-%H-%M-%S")
-    timeline_name =  client_name + "_" + formatted_datetime
-    sketch_name = row["Arguments"]["SketchName"]
 
-    sketch_id = get_sketch_id(api, sketch_name, logger)
-    row["LastIntervalDate"] = datetime.now().strftime("%d-%m-%Y-%H-%M-%S")
-    row["ExpireDate"] = formatted_future_datetime
-    logger.info("Checking if sketch exists or not [Need timesketch importer connection!]")
-    ip = config['ClientData']['API']['Timesketch']["IP"]
-    timesketch_importer_path = ""
-    # When the shell is inside a container the user name will always be node else its dev version
-    # Using jsonl file (converted by local psort with date filtering)
-    if(user_name == "node"):
-        timesketch_importer_path = f"/usr/local/bin/timesketch_importer"
-        PathToJsonl = f"/plaso/{client_name}Artifacts.jsonl"
-    else:
-        timesketch_importer_path = f"/home/{user_name}/.local/bin/timesketch_importer"
-        PathToJsonl = f"/home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso/{client_name}Artifacts.jsonl"
+def upload_plaso_direct(api, sketch, plaso_file_path, timeline_name, logger):
+    """Upload .plaso file directly to Timesketch using the import API.
 
-    # Add a check for sketch_id and construct command
-    # TimeSketch is accessible at root path https://{ip}/ (not /timesketch subpath due to known subpath issues)
-    # SSL verification is disabled via .timesketchrc config file (verify = False)
-    if sketch_id is not None:
-        logger.info(f"Sketch with the same name found. Sketchid: {sketch_id}")
-        row["UniqueID"] = {"SketchID": sketch_id, "TimelineID": timeline_name}
-        return row, f'{timesketch_importer_path} -u {username} -p {password} --host https://{ip}/ --timeline_name {timeline_name} --sketch_id {sketch_id} {PathToJsonl} --quick'
-    else:
-        logger.info(f"Sketch with the same name not found. Creating new Sketch: {sketch_name}")
-        row["UniqueID"] = {"SketchID": sketch_name, "TimelineID": timeline_name}
-        return row, f'{timesketch_importer_path} -u {username} -p {password} --host https://{ip}/ --timeline_name {timeline_name} --sketch_name {sketch_name} {PathToJsonl} --quick'
+    Timesketch's Celery workers will handle the psort processing internally.
+
+    Args:
+        api: Connected TimesketchApi client
+        sketch: Timesketch sketch object
+        plaso_file_path: Path to the .plaso file
+        timeline_name: Name for the timeline
+        logger: Logger instance
+
+    Returns:
+        dict with 'timeline_id', 'celery_task_id', 'index_name'
+    """
+    logger.info(f"Starting direct .plaso upload to Timesketch")
+    logger.info(f"Plaso file: {plaso_file_path}")
+    logger.info(f"Timeline name: {timeline_name}")
+    logger.info(f"Sketch ID: {sketch.id}")
+
+    # Verify file exists and get size
+    if not os.path.exists(plaso_file_path):
+        raise FileNotFoundError(f".plaso file not found: {plaso_file_path}")
+
+    plaso_size = os.path.getsize(plaso_file_path)
+    logger.info(f"Plaso file size: {plaso_size / (1024*1024):.2f} MB")
+
+    # Create importer streamer for direct .plaso upload
+    with ts_importer.ImportStreamer() as streamer:
+        streamer.set_sketch(sketch)
+        streamer.set_timeline_name(timeline_name)
+        streamer.set_data_label('plaso')
+        streamer.set_upload_context(f'Uploaded via RISX automation at {datetime.now().isoformat()}')
+
+        logger.info("Uploading .plaso file (this transfers the file to Timesketch)...")
+        streamer.add_file(plaso_file_path)
+
+        # Get the results before context manager closes
+        timeline_id = getattr(streamer, '_timeline_id', None)
+        celery_task_id = getattr(streamer, 'celery_task_id', None)
+        index_name = getattr(streamer, '_index', None)
+
+    logger.info(f"Upload complete!")
+    logger.info(f"Timeline ID: {timeline_id}")
+    logger.info(f"Celery Task ID: {celery_task_id}")
+    logger.info(f"Index Name: {index_name}")
+
+    return {
+        'timeline_id': timeline_id,
+        'celery_task_id': celery_task_id,
+        'index_name': index_name
+    }
+
+
+def wait_for_timeline_ready(api, sketch_id, timeline_name, timeout_seconds=3600, poll_interval=30, logger=None):
+    """Wait for timeline processing to complete with progress updates.
+
+    Args:
+        api: Connected TimesketchApi client
+        sketch_id: Sketch ID containing the timeline
+        timeline_name: Timeline name to monitor
+        timeout_seconds: Maximum wait time (default 1 hour)
+        poll_interval: Seconds between status checks
+        logger: Logger instance
+
+    Returns:
+        tuple (success: bool, final_status: str, timeline_id: int or None)
+    """
+    start_time = time.time()
+    sketch = api.get_sketch(sketch_id)
+
+    logger.info(f"Waiting for timeline '{timeline_name}' to be ready...")
+    logger.info(f"Timeout: {timeout_seconds}s, Poll interval: {poll_interval}s")
+
+    while True:
+        elapsed = int(time.time() - start_time)
+
+        # Check timeout
+        if elapsed > timeout_seconds:
+            logger.error(f"Timeout waiting for timeline after {elapsed}s")
+            return (False, "timeout", None)
+
+        # Get all timelines and find ours by name
+        try:
+            timelines = sketch.list_timelines()
+            timeline = None
+            for tl in timelines:
+                if tl.name == timeline_name:
+                    timeline = tl
+                    break
+
+            if not timeline:
+                logger.info(f"Timeline '{timeline_name}' not yet visible, waiting... (elapsed: {elapsed}s)")
+                time.sleep(poll_interval)
+                continue
+
+            status = timeline.status
+            logger.info(f"Timeline status: {status} (elapsed: {elapsed}s)")
+
+            if status == "ready":
+                logger.info(f"Timeline '{timeline_name}' is ready!")
+                return (True, status, timeline.id)
+            elif status == "fail":
+                logger.error(f"Timeline '{timeline_name}' processing failed")
+                return (False, status, timeline.id)
+            elif status in ["processing", "pending"]:
+                time.sleep(poll_interval)
+            else:
+                logger.warning(f"Unknown status: {status}, continuing to wait...")
+                time.sleep(poll_interval)
+
+        except Exception as e:
+            logger.warning(f"Error checking timeline status: {e}, retrying...")
+            time.sleep(poll_interval)
+
+    return (False, "unknown", None)
 
 
 def get_sketch_id(api, sketch_name, logger):
@@ -358,6 +441,19 @@ def start_timesketch(row, general_config, logger):
     # For example:
     try:
         logger.info("WhoAmI:" + str(subprocess.run(['whoami'], stdout=subprocess.PIPE, text=True).stdout.strip()))
+        
+        # Clean up any orphaned (stopped/exited) plaso containers from previous crashed runs
+        # This prevents accumulation of dead containers and ensures is_plaso_running only detects active jobs
+        logger.info("Cleaning up any orphaned plaso containers from previous runs...")
+        subprocess.run(
+            'sudo docker ps -a -q --filter "ancestor=log2timeline/plaso" --filter "status=exited" | xargs -r sudo docker rm -f',
+            shell=True, capture_output=True, text=True
+        )
+        subprocess.run(
+            'sudo docker ps -a -q --filter "ancestor=log2timeline/plaso:latest" --filter "status=exited" | xargs -r sudo docker rm -f',
+            shell=True, capture_output=True, text=True
+        )
+        
         if(is_plaso_running(logger)):
             logger.error("Timesketch plaso is already running. Let it finish and run again later")
             row["Status"] = "Failed"
@@ -383,8 +479,6 @@ def start_timesketch(row, general_config, logger):
         logger.info(f"  - KapeCollection: {row['Arguments'].get('KapeCollection', 'N/A')}")
         logger.info(f"  - CPUThrottling: {row['Arguments'].get('CPUThrottling', 'N/A')}%")
         logger.info(f"  - MemoryThrottling: {row['Arguments'].get('MemoryThrottling', 'N/A')}%")
-        logger.info(f"  - DateRangeStart: {row['Arguments'].get('DateRangeStart', '*')}")
-        logger.info(f"  - DateRangeEnd: {row['Arguments'].get('DateRangeEnd', '*')}")
         logger.info(f"  - Parsers: {row['Arguments'].get('Parsers', '*')}")
         logger.info(f"  - Population: {len(row.get('Population', []))} client(s)")
         logger.info("-" * 60)
@@ -413,7 +507,7 @@ def start_timesketch(row, general_config, logger):
                         logger.info("Client name:" + client_name)
                         client_id = host_client_id_dict[client_name]
                         logger.info("-" * 40)
-                        logger.info(f"[STEP 1/7] KAPE ARTIFACT COLLECTION")
+                        logger.info(f"[STEP 1/6] KAPE ARTIFACT COLLECTION")
                         logger.info("-" * 40)
                         logger.info(f"Client: {client_name} (ID: {client_id})")
                         logger.info(f"KAPE Collection: {row['Arguments']['KapeCollection']}")
@@ -421,7 +515,7 @@ def start_timesketch(row, general_config, logger):
                         logger.info(f"CPU Limit: 50%")
                         cpu_limit = 50
                         flow_id = run_artifact_on_client(channel=channel, client_id=client_id, kape_collection=row["Arguments"]["KapeCollection"], timeout = int(row["ArtifactTimeOutInMinutes"]), cpu_limit = cpu_limit, logger=logger)
-                        logger.info(f"[STEP 1/7] COMPLETE - Flow ID: {flow_id}")
+                        logger.info(f"[STEP 1/6] COMPLETE - Flow ID: {flow_id}")
                         # Get the username
                         user_name = subprocess.run(['whoami'], stdout=subprocess.PIPE, text=True).stdout.strip()
                         # user_name="tenroot"
@@ -439,7 +533,7 @@ def start_timesketch(row, general_config, logger):
                         logger.info("Number of Memory:" + ram)
 
                         logger.info("-" * 40)
-                        logger.info(f"[STEP 2/7] EXPORT COLLECTION AS ZIP")
+                        logger.info(f"[STEP 2/6] EXPORT COLLECTION AS ZIP")
                         logger.info("-" * 40)
                         logger.info(f"Exporting collection {flow_id} as ZIP for plaso processing...")
                         export_query = f"""
@@ -477,7 +571,7 @@ SELECT create_flow_download(
                         if export_path.startswith('fs:'):
                             export_path = export_path[3:]
 
-                        logger.info(f"[STEP 2/7] COMPLETE - Exported to: {export_path}")
+                        logger.info(f"[STEP 2/6] COMPLETE - Exported to: {export_path}")
 
                         # Extract ZIP to temp directory for plaso
                         # Note: Container's /tmp maps to /home/tenroot/setup_platform/workdir/tmp on host
@@ -487,7 +581,7 @@ SELECT create_flow_download(
                         zip_path = f"/velociraptor{export_path}"
 
                         logger.info("-" * 40)
-                        logger.info(f"[STEP 3/7] COPY ZIP FOR PLASO")
+                        logger.info(f"[STEP 3/6] COPY ZIP FOR PLASO")
                         logger.info("-" * 40)
                         logger.info(f"Copying ZIP from Velociraptor container...")
                         additionals.funcs.run_subprocess(f"sudo rm -rf {extract_dir}", "", logger)
@@ -501,15 +595,20 @@ SELECT create_flow_download(
                             "", logger
                         )
 
-                        logger.info(f"[STEP 3/7] COMPLETE - ZIP file ready: {host_zip_path}")
+                        logger.info(f"[STEP 3/6] COMPLETE - ZIP file ready: {host_zip_path}")
 
                         # Generate timestamp for log files
                         log_datetime = datetime.now().strftime("%d-%m-%Y-%H-%M-%S")
-                        plaso_dir = "/home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso"
 
-                        # Get date range and parsers from config
-                        date_range_start = row["Arguments"].get("DateRangeStart", "*")
-                        date_range_end = row["Arguments"].get("DateRangeEnd", "*")
+                        # Docker volume mounts always use HOST paths (even when running from inside a container)
+                        # But file checks use the path as seen from THIS process
+                        plaso_host_dir = "/home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso"
+                        if user_name == "node":
+                            plaso_dir = "/plaso"  # Container's view of the mounted volume
+                        else:
+                            plaso_dir = plaso_host_dir  # Running on host directly
+
+                        # Get parsers from config
                         parsers = row["Arguments"].get("Parsers", "*")
 
                         # Build log2timeline command - always exclude winevtx (causes Timesketch psort crash)
@@ -520,162 +619,123 @@ SELECT create_flow_download(
                         # else:
                         #     parser_arg = "!winevtx"
                         parser_arg = parsers if parsers else "*"
-                        command1 = f"sudo docker run --rm -v {host_extract_dir}:{host_extract_dir}:ro -v {plaso_dir}/:/data --cpus='{cpus}' --memory='{ram}' --user root log2timeline/plaso:fixed log2timeline --parsers '{parser_arg}' --workers {cpus} --status_view window --status_view_interval 60 --logfile /data/log2timeline_{client_name}_{log_datetime}.log"
+                        command1 = f"sudo docker run --rm -v {host_extract_dir}:{host_extract_dir}:ro -v {plaso_host_dir}/:/data --cpus='{cpus}' --memory='{ram}' --user root log2timeline/plaso:latest log2timeline --parsers '{parser_arg}' --workers {cpus} --status_view window --status_view_interval 60 --logfile /data/log2timeline_{client_name}_{log_datetime}.log"
                         # Add storage file and source
-                        # Note: Date filtering is done in psort, not log2timeline
+                        # Note: Full plaso file is uploaded to Timesketch - use Timesketch queries for date filtering
                         command1 += f" --storage-file /data/{client_name}Artifacts.plaso {host_zip_path}"
 
                         logger.info("-" * 40)
-                        logger.info(f"[STEP 4/7] LOG2TIMELINE (PLASO)")
+                        logger.info(f"[STEP 4/6] LOG2TIMELINE (PLASO)")
                         logger.info("-" * 40)
-                        logger.info(f"Date Range: {date_range_start} to {date_range_end if date_range_end != '*' else 'NOW'}")
                         logger.info(f"Parsers: {parsers}")
                         logger.info(f"CPU: {cpus}, Memory: {ram}")
                         logger.info(f"Log file: log2timeline_{client_name}_{log_datetime}.log")
 
-                        # psort conversion with date filtering (using fixed plaso image with winevtx bug fix)
-                        psort_command = f"sudo docker run --rm -v {plaso_dir}/:/data --cpus='{cpus}' --memory='{ram}' --user root log2timeline/plaso:fixed psort -o json_line -w /data/{client_name}Artifacts.jsonl"
-
-                        # Add storage file
-                        psort_command += f" /data/{client_name}Artifacts.plaso"
-
-                        # Add date filtering using plaso filter expression
-                        # Filter syntax: timestamp >= DATETIME('YYYY-MM-DDT00:00:00') AND timestamp < DATETIME('YYYY-MM-DDT00:00:00')
-                        # Note: Use single quotes inside DATETIME() to avoid shell quoting issues with outer double quotes
-                        date_filter_parts = []
-                        if date_range_start and date_range_start != "*" and date_range_start != "":
-                            date_filter_parts.append(f"timestamp >= DATETIME('{date_range_start}T00:00:00')")
-                        if date_range_end and date_range_end != "*" and date_range_end != "":
-                            # Add one day to include the end date fully
-                            end_date = datetime.strptime(date_range_end, "%Y-%m-%d") + timedelta(days=1)
-                            date_filter_parts.append(f"timestamp < DATETIME('{end_date.strftime('%Y-%m-%d')}T00:00:00')")
-                        else:
-                            # No end date specified - use tomorrow to include today's events
-                            tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-                            date_filter_parts.append(f"timestamp < DATETIME('{tomorrow}T00:00:00')")
-
-                        if date_filter_parts:
-                            date_filter = " AND ".join(date_filter_parts)
-                            psort_command += f" \"{date_filter}\""
-
+                        # Connect to Timesketch API early to get/create sketch
                         api = connect_timesketch_api(general_config, logger)
-                        #Check if there existing sketch or not
-                        row, command2 = get_command2(general_config, api, row, host_name, user_name, client_name, logger)
                         logger.info("Preparing environment for plaso...")
-                        # Return after loading file
-                        # additionals.funcs.run_subprocess(f"sudo docker run --rm -v /home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso/:/data alpine sh -c 'rm -f /data/{client_name}Artifacts.plaso'", "", logger)
-                        # additionals.funcs.run_subprocess(f"sudo docker run --rm -v /home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso/:/data/ alpine sh -c 'rm -f /data/.timesketchrc'", "", logger)
-                        # additionals.funcs.run_subprocess(f"sudo docker run --rm -v /home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso/:/data/ alpine sh -c 'rm -f /data/.timesketch.token'", "", logger)
-                        additionals.funcs.run_subprocess(f"sudo rm -f /home/node/.timesketch.token", "", logger)
-                        additionals.funcs.run_subprocess(f"sudo rm -f /home/node/.timesketchrc", "", logger)
-                        # Delete old plaso and jsonl files to avoid "Output file already exists" error
-                        additionals.funcs.run_subprocess(f"sudo rm -f {plaso_dir}/{client_name}Artifacts.plaso", "", logger)
-                        additionals.funcs.run_subprocess(f"sudo rm -f {plaso_dir}/{client_name}Artifacts.jsonl", "", logger)
 
-                        # Create .timesketchrc with SSL verification disabled for self-signed certificates
-                        logger.info("Creating .timesketchrc config with SSL verification disabled")
-                        timesketch_config = f"""[timesketch]
-host_uri = https://{general_config['ClientData']['API']['Timesketch']['IP']}/
-username = {general_config['ClientData']['API']['Timesketch']['Username']}
-auth_mode = userpass
-verify = False
-"""
-                        config_path = "/home/node/.timesketchrc"
-                        with open(config_path, 'w') as f:
-                            f.write(timesketch_config)
-                        logger.info(f"Created {config_path} with verify=False (using root path)")
+                        # Delete old plaso file to avoid "Output file already exists" error
+                        # Note: sudo rm runs on HOST, so use host path
+                        additionals.funcs.run_subprocess(f"sudo rm -f {plaso_host_dir}/{client_name}Artifacts.plaso", "", logger)
 
                         logger.info("Running log2timeline (this may take a while)...")
                         logger.info(f"Full command: {command1}")
                         plaso_start_time = time.time()
                         additionals.funcs.run_subprocess(command1,"Processing completed", logger)
                         plaso_duration = int(time.time() - plaso_start_time)
-                        logger.info(f"[STEP 4/7] COMPLETE - log2timeline finished in {plaso_duration}s")
+                        logger.info(f"[STEP 4/6] COMPLETE - log2timeline finished in {plaso_duration}s")
 
                         logger.info("-" * 40)
-                        logger.info(f"[STEP 5/7] PINFO (PLASO FILE INFO)")
+                        logger.info(f"[STEP 5/6] PINFO (PLASO FILE INFO)")
                         logger.info("-" * 40)
                         logs_dir = "/home/tenroot/setup_platform/workdir/risx-mssp/backend/logs"
-                        pinfo_command = f"sudo docker run --rm -v {plaso_dir}/:/data -v {logs_dir}/:/logs log2timeline/plaso:fixed pinfo -w /logs/pinfo_{client_name}_{log_datetime}.log /data/{client_name}Artifacts.plaso"
+                        pinfo_command = f"sudo docker run --rm -v {plaso_host_dir}/:/data -v {logs_dir}/:/logs log2timeline/plaso:latest pinfo -w /logs/pinfo_{client_name}_{log_datetime}.log /data/{client_name}Artifacts.plaso"
                         logger.info(f"Running pinfo to extract plaso file statistics...")
                         logger.info(f"Full command: {pinfo_command}")
                         additionals.funcs.run_subprocess(pinfo_command, "", logger)
-                        logger.info(f"[STEP 5/7] COMPLETE - pinfo saved to: pinfo_{client_name}_{log_datetime}.log")
+                        logger.info(f"[STEP 5/6] COMPLETE - pinfo saved to: pinfo_{client_name}_{log_datetime}.log")
 
                         logger.info("-" * 40)
-                        logger.info(f"[STEP 6/7] PSORT (JSONL CONVERSION WITH DATE FILTER)")
+                        logger.info(f"[STEP 6/6] DIRECT PLASO UPLOAD TO TIMESKETCH")
                         logger.info("-" * 40)
-                        logger.info(f"Converting plaso to JSONL with date filtering...")
-                        logger.info(f"Date filter: {date_filter if date_filter_parts else 'None'}")
-                        logger.info(f"Full command: {psort_command}")
 
-                        # Check if input .plaso file exists before running psort
-                        plaso_input_path = f"{plaso_dir}/{client_name}Artifacts.plaso"
-                        jsonl_output_path = f"{plaso_dir}/{client_name}Artifacts.jsonl"
-                        # Importer path may differ from host path (container mount)
-                        if user_name == "node":
-                            importer_jsonl_path = f"/plaso/{client_name}Artifacts.jsonl"
+                        # Check if input .plaso file exists
+                        plaso_file_path = f"{plaso_dir}/{client_name}Artifacts.plaso"
+                        if not os.path.exists(plaso_file_path):
+                            logger.error(f"Input .plaso file NOT FOUND: {plaso_file_path}")
+                            raise Exception(f".plaso file not found: {plaso_file_path}")
+
+                        plaso_size = os.path.getsize(plaso_file_path)
+                        logger.info(f"Plaso file: {plaso_file_path}")
+                        logger.info(f"Plaso size: {plaso_size / (1024*1024):.2f} MB")
+
+                        # Get or create sketch
+                        sketch_name = row["Arguments"]["SketchName"]
+                        sketch_id = get_sketch_id(api, sketch_name, logger)
+
+                        # Generate timeline name
+                        formatted_datetime = datetime.now().strftime("%d-%m-%Y-%H-%M-%S")
+                        timeline_name = f"{client_name}_{formatted_datetime}"
+
+                        # Store metadata
+                        row["LastIntervalDate"] = datetime.now().strftime("%d-%m-%Y-%H-%M-%S")
+                        row["ExpireDate"] = formatted_datetime
+
+                        logger.info(f"Sketch Name: {sketch_name}")
+                        logger.info(f"Timeline Name: {timeline_name}")
+
+                        # Get or create sketch object
+                        if sketch_id is not None:
+                            logger.info(f"Using existing sketch with ID: {sketch_id}")
+                            sketch = api.get_sketch(sketch_id)
+                            row["UniqueID"] = {"SketchID": sketch_id, "TimelineID": timeline_name}
                         else:
-                            importer_jsonl_path = jsonl_output_path
+                            logger.info(f"Creating new sketch: {sketch_name}")
+                            sketch = api.create_sketch(sketch_name)
+                            row["UniqueID"] = {"SketchID": sketch.id, "TimelineID": timeline_name}
+                            logger.info(f"Created new sketch with ID: {sketch.id}")
 
-                        logger.info(f"Input .plaso file: {plaso_input_path}")
-                        logger.info(f"Output .jsonl file (host path): {jsonl_output_path}")
-                        logger.info(f"Output .jsonl file (importer path): {importer_jsonl_path}")
+                        # Upload .plaso file directly to Timesketch
+                        logger.info("Uploading .plaso file directly to Timesketch...")
+                        logger.info("(Timesketch workers will handle psort processing internally)")
+                        upload_start_time = time.time()
 
-                        import os as os_check
-                        if os_check.path.exists(plaso_input_path):
-                            plaso_size = os_check.path.getsize(plaso_input_path)
-                            logger.info(f"Input .plaso file exists, size: {plaso_size / (1024*1024):.2f} MB")
-                        else:
-                            logger.error(f"Input .plaso file NOT FOUND: {plaso_input_path}")
+                        upload_result = upload_plaso_direct(
+                            api=api,
+                            sketch=sketch,
+                            plaso_file_path=plaso_file_path,
+                            timeline_name=timeline_name,
+                            logger=logger
+                        )
 
-                        psort_start_time = time.time()
-                        additionals.funcs.run_subprocess(psort_command, "Processing completed", logger)
-                        psort_duration = int(time.time() - psort_start_time)
+                        upload_duration = int(time.time() - upload_start_time)
+                        logger.info(f"Upload completed in {upload_duration}s")
 
-                        # Check if output .jsonl file was created (psort may return error but still create file)
-                        jsonl_exists = False
-                        jsonl_size = 0
-                        if os_check.path.exists(jsonl_output_path):
-                            jsonl_size = os_check.path.getsize(jsonl_output_path)
-                            logger.info(f"Output .jsonl file created at host path, size: {jsonl_size / (1024*1024):.2f} MB")
-                            jsonl_exists = True
-                        else:
-                            logger.error(f"Output .jsonl file NOT FOUND at host path: {jsonl_output_path}")
+                        # Wait for Timesketch workers to process the .plaso file
+                        logger.info("Waiting for Timesketch to process the .plaso file...")
+                        timeout_minutes = int(row.get('ArtifactTimeOutInMinutes', 60))
+                        timeout_seconds = timeout_minutes * 60
 
-                        # Also check importer path if different (for container environment)
-                        if importer_jsonl_path != jsonl_output_path:
-                            if os_check.path.exists(importer_jsonl_path):
-                                importer_size = os_check.path.getsize(importer_jsonl_path)
-                                logger.info(f"Output .jsonl file found at importer path, size: {importer_size / (1024*1024):.2f} MB")
-                                jsonl_exists = True
-                            else:
-                                logger.warning(f"Output .jsonl NOT at importer path: {importer_jsonl_path}")
-                                logger.warning("Container mount may not be configured correctly")
+                        success, final_status, timeline_id = wait_for_timeline_ready(
+                            api=api,
+                            sketch_id=row["UniqueID"]["SketchID"],
+                            timeline_name=timeline_name,
+                            timeout_seconds=timeout_seconds,
+                            poll_interval=30,
+                            logger=logger
+                        )
 
-                        if not jsonl_exists:
-                            logger.error("psort may have failed - check docker logs or try running psort manually")
-                            logger.error("Skipping timesketch upload due to missing jsonl file")
-                            raise Exception(f"JSONL file not created at {jsonl_output_path}")
+                        if not success:
+                            raise Exception(f"Timeline processing failed with status: {final_status}")
 
-                        if jsonl_size < 1024:  # Less than 1KB
-                            logger.warning(f"JSONL file is very small ({jsonl_size} bytes) - may be empty or corrupt")
+                        # Update timeline ID with actual ID from Timesketch
+                        if timeline_id:
+                            row["UniqueID"]["TimelineID"] = timeline_id
 
-                        logger.info(f"[STEP 6/7] COMPLETE - psort finished in {psort_duration}s")
-
-                        logger.info("-" * 40)
-                        logger.info(f"[STEP 7/7] TIMESKETCH IMPORTER")
-                        logger.info("-" * 40)
-                        logger.info("Uploading jsonl file to Timesketch...")
-                        logger.info(f"Sketch Name: {row['Arguments']['SketchName']}")
-                        logger.info(f"Timeline Name: {row['UniqueID']['TimelineID']}")
-                        logger.info(f"JSONL file path (for importer): {importer_jsonl_path}")
-                        logger.info(f"JSONL file size: {jsonl_size / (1024*1024):.2f} MB")
-                        logger.info(f"Full command: {command2}")
-                        importer_start_time = time.time()
-                        additionals.funcs.run_subprocess(command2, "", logger)
-                        importer_duration = int(time.time() - importer_start_time)
-                        logger.info(f"[STEP 7/7] COMPLETE - Timesketch importer finished in {importer_duration}s")
+                        logger.info(f"[STEP 6/6] COMPLETE - Timeline ready!")
+                        logger.info(f"Sketch ID: {row['UniqueID']['SketchID']}")
+                        logger.info(f"Timeline ID: {row['UniqueID']['TimelineID']}")
 
                         logger.info("-" * 40)
                         logger.info("CLEANUP")
@@ -683,24 +743,6 @@ verify = False
                         logger.info(f"Cleaning up extracted files: {extract_dir}")
                         additionals.funcs.run_subprocess(f"sudo rm -rf {extract_dir}", "", logger)
 
-                        #additionals.funcs.run_subprocess(f"docker run --rm -v /home/{user_name}/:/data alpine sh -c 'rm -f /data/{client_name}Artifacts.plaso'", "", logger)
-                        # time.sleep(120)
-                        time.sleep(30)
-                        logger.info("SketchID:" + str(row["UniqueID"]["SketchID"]))
-                        logger.info("SketchName:" + str(row["Arguments"]["SketchName"]))
-                        logger.info("TimeLine ID:" + row["UniqueID"]["TimelineID"])
-                        if(row["UniqueID"]["SketchID"] == row["Arguments"]["SketchName"]):
-                            row["UniqueID"]["SketchID"] = get_sketch_id(api, row["Arguments"]["SketchName"], logger)
-
-                        # Only fetch timeline ID if we have a valid sketch ID
-                        if row["UniqueID"]["SketchID"] is not None:
-                            row["UniqueID"]["TimelineID"] = get_timeline_id(api, row["UniqueID"]["SketchID"], row["UniqueID"]["TimelineID"], logger)
-                            logger.info(row["UniqueID"]["TimelineID"])
-                        else:
-                            logger.warning(f"Could not get sketch ID for '{row['Arguments']['SketchName']}' - sketch may not exist yet or timesketch_importer is still processing")
-                            # Timeline was imported with --sketch_name, so it should exist once timesketch finishes processing
-                            logger.info("Timeline import was initiated - check Timesketch UI for status")
-                        #make_sketches_public(api, logger)
                         api.session.close()
                 except Exception as e:
                     logger.error("Mid run timesketch error:" + str(e))
