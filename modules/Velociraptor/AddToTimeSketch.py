@@ -659,6 +659,12 @@ SELECT create_flow_download(
                         additionals.funcs.run_subprocess(pinfo_command, "", logger)
                         logger.info(f"[STEP 5/6] COMPLETE - pinfo saved to: pinfo_{client_name}_{log_datetime}.log")
 
+                        # Reconnect Timesketch API to get fresh CSRF token (old one may have expired during plaso)
+                        logger.info("Reconnecting to Timesketch API (refreshing CSRF token)...")
+                        api = connect_timesketch_api(general_config, logger)
+                        if not api:
+                            raise Exception("Failed to reconnect to Timesketch API after plaso processing")
+
                         logger.info("-" * 40)
                         logger.info(f"[STEP 6/6] DIRECT PLASO UPLOAD TO TIMESKETCH")
                         logger.info("-" * 40)
@@ -761,8 +767,6 @@ SELECT create_flow_download(
             logger.info("=" * 60)
             logger.info("TIMESKETCH PIPELINE COMPLETED SUCCESSFULLY")
             logger.info("=" * 60)
-            logger.info("Cleaning up plaso containers...")
-            additionals.funcs.run_subprocess('sudo docker ps -a -q --filter "ancestor=log2timeline/plaso" | sudo xargs -r docker rm -f',"", logger)
             # DEBUG: Comment out plaso folder cleanup to allow debugging
             logger.info(f"Cleaning plaso folder: {plaso_cleanup_dir}")
             additionals.funcs.run_subprocess(f"rm -rf {plaso_cleanup_dir}/*", "", logger)
@@ -775,8 +779,6 @@ SELECT create_flow_download(
         logger.error(traceback.format_exc())
         row["Status"] = "Failed"
         row["Error"] = "Unknown error:" + str(e)
-        logger.info("Cleaning up plaso containers...")
-        additionals.funcs.run_subprocess('sudo docker ps -a -q --filter "ancestor=log2timeline/plaso" | sudo xargs -r docker rm -f',"", logger)
         # DEBUG: Comment out plaso folder cleanup to allow debugging
         logger.info("Cleaning plaso folder...")
         user_name = subprocess.run(['whoami'], stdout=subprocess.PIPE, text=True).stdout.strip()
@@ -786,5 +788,3 @@ SELECT create_flow_download(
             plaso_cleanup_dir = "/home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso"
         additionals.funcs.run_subprocess(f"rm -rf {plaso_cleanup_dir}/*", "", logger)
         return row
-
-
