@@ -778,7 +778,7 @@ async def run_updates_daily(time_interval):
             if connection:
                 connection.close()
                 logger.info("Database connection closed.")
-        logger.info("Daily updates finished !)
+        logger.info("Daily updates finished !")
         logger.info(f"Update cycle finished. Sleeping for {time_to_sleep_hours} hours.")
         
         await asyncio.sleep(sleep_seconds)
