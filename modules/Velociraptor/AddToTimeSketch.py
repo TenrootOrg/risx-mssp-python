@@ -437,6 +437,11 @@ def make_sketches_public(api, logger):
             # First attempt - use set_acl if available (newer API)
             sketch.set_acl(user_list=[], group_list=[], make_public=True)
 def start_timesketch(row, general_config, logger):
+    # Redirect stderr to devnull to prevent Node.js maxBuffer overflow and false-failure detection
+    # All meaningful output goes through the logger to log files
+    import sys, os
+    sys.stderr = open(os.devnull, "w")
+
     # Here, based on the parsed arguments, you can call different functions
     # For example:
     try:
