@@ -1,6 +1,9 @@
 import os
 import sys
 import re
+# Redirect stderr to devnull to prevent Node.js exec() maxBuffer overflow
+# All meaningful output goes through the logging module to log files
+sys.stderr = open(os.devnull, "w")
 
 # Wrappers for async:
 # Wrapper for setup_mysql_connection
