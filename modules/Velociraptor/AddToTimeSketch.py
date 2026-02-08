@@ -438,24 +438,45 @@ def make_sketches_public(api, logger):
             sketch.set_acl(user_list=[], group_list=[], make_public=True)
 TIMESKETCH_LOCK_FILE = "/tmp/timesketch.lock"
 
+def is_pid_running(pid):
+    """Check if a process with given PID is running."""
+    try:
+        os.kill(pid, 0)  # Signal 0 doesn't kill, just checks if process exists
+        return True
+    except OSError:
+        return False
+
 def start_timesketch(row, general_config, logger):
     # Redirect stderr to devnull to prevent Node.js maxBuffer overflow and false-failure detection
     # All meaningful output goes through the logger to log files
     import sys, os
     sys.stderr = open(os.devnull, "w")
 
-    # Simple lock file to prevent concurrent runs
+    # Lock file to prevent concurrent runs - with stale lock detection
     if os.path.exists(TIMESKETCH_LOCK_FILE):
-        logger.error("Timesketch is already running (lock file exists)")
-        row["Status"] = "Failed"
-        row["Error"] = "Timesketch is already running. Please wait for the current run to complete."
-        return row
+        try:
+            with open(TIMESKETCH_LOCK_FILE, 'r') as f:
+                old_pid = int(f.read().strip())
+            if is_pid_running(old_pid):
+                # Process is still running - this is a real lock
+                logger.error(f"Timesketch is already running (PID {old_pid})")
+                row["Status"] = "Failed"
+                row["Error"] = "Timesketch is already running. Please wait for the current run to complete."
+                return row
+            else:
+                # Stale lock - process crashed, remove it
+                logger.warning(f"Removing stale lock file (PID {old_pid} no longer running)")
+                os.remove(TIMESKETCH_LOCK_FILE)
+        except (ValueError, IOError) as e:
+            # Corrupted lock file - remove it
+            logger.warning(f"Removing corrupted lock file: {e}")
+            os.remove(TIMESKETCH_LOCK_FILE)
 
     # Create lock file
     try:
         with open(TIMESKETCH_LOCK_FILE, 'w') as f:
             f.write(str(os.getpid()))
-        logger.info("Timesketch lock acquired")
+        logger.info(f"Timesketch lock acquired (PID {os.getpid()})")
     except Exception as e:
         logger.error(f"Failed to create lock file: {e}")
 
