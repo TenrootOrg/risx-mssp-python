@@ -489,11 +489,7 @@ def start_timesketch(row, general_config, logger):
         # This prevents accumulation of dead containers and ensures is_plaso_running only detects active jobs
         logger.info("Cleaning up any orphaned plaso containers from previous runs...")
         subprocess.run(
-            'sudo docker ps -a -q --filter "ancestor=log2timeline/plaso" --filter "status=exited" | xargs -r sudo docker rm -f',
-            shell=True, capture_output=True, text=True
-        )
-        subprocess.run(
-            'sudo docker ps -a -q --filter "ancestor=log2timeline/plaso:latest" --filter "status=exited" | xargs -r sudo docker rm -f',
+            'sudo docker ps -a -q --filter "ancestor=log2timeline/plaso:20260119" --filter "status=exited" | xargs -r sudo docker rm -f',
             shell=True, capture_output=True, text=True
         )
 
@@ -672,7 +668,7 @@ SELECT create_flow_download(
                         #     parser_arg = "!winevtx"
                         parser_arg = parsers if parsers else "*"
                         # Use --temporary_directory to keep plaso temp files inside the run folder (prevents leftover tmp* dirs)
-                        command1 = f"sudo docker run --rm -v {host_extract_dir}:{host_extract_dir}:ro -v {plaso_host_dir}/:/data --cpus='{cpus}' --memory='{ram}' --user root log2timeline/plaso:latest log2timeline --parsers '{parser_arg}' --workers {num_workers} --temporary_directory /data --status_view window --status_view_interval 60 --logfile /data/log2timeline_{client_name}_{log_datetime}.log"
+                        command1 = f"sudo docker run --rm -v {host_extract_dir}:{host_extract_dir}:ro -v {plaso_host_dir}/:/data --cpus='{cpus}' --memory='{ram}' --user root log2timeline/plaso:20260119 log2timeline --parsers '{parser_arg}' --workers {num_workers} --temporary_directory /data --status_view window --status_view_interval 60 --logfile /data/log2timeline_{client_name}_{log_datetime}.log"
                         # Add storage file and source
                         # Note: Full plaso file is uploaded to Timesketch - use Timesketch queries for date filtering
                         command1 += f" --storage-file /data/{client_name}Artifacts.plaso {host_zip_path}"
@@ -706,7 +702,7 @@ SELECT create_flow_download(
                         logger.info(f"[STEP 5/6] PINFO (PLASO FILE INFO)")
                         logger.info("-" * 40)
                         logs_dir = "/home/tenroot/setup_platform/workdir/risx-mssp/backend/logs"
-                        pinfo_command = f"sudo docker run --rm -v {plaso_host_dir}/:/data -v {logs_dir}/:/logs log2timeline/plaso:latest pinfo -w /logs/pinfo_{client_name}_{log_datetime}.log /data/{client_name}Artifacts.plaso"
+                        pinfo_command = f"sudo docker run --rm -v {plaso_host_dir}/:/data -v {logs_dir}/:/logs log2timeline/plaso:20260119 pinfo -w /logs/pinfo_{client_name}_{log_datetime}.log /data/{client_name}Artifacts.plaso"
                         logger.info(f"Running pinfo to extract plaso file statistics...")
                         logger.info(f"Full command: {pinfo_command}")
                         additionals.funcs.run_subprocess(pinfo_command, "", logger)

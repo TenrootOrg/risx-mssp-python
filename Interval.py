@@ -476,23 +476,20 @@ async def download_plaso_image(logger):
         if check_result.stdout and 'log2timeline/plaso' in check_result.stdout:
             logger.info("log2timeline/plaso image already exists locally, skipping download")
         else:
-            logger.info("Pulling log2timeline/plaso:latest Docker image (this may take a while)...")
+            logger.info("Pulling log2timeline/plaso:20260119 Docker image (this may take a while)...")
 
             # Pull the image using the existing run_subprocess which handles logging
             await asyncio.to_thread(
                 lambda: additionals.funcs.run_subprocess(
-                    "sudo docker pull log2timeline/plaso:latest",
+                    "sudo docker pull log2timeline/plaso:20260119",
                     "Downloaded newer image",
                     logger
                 )
             )
 
-            logger.info("log2timeline/plaso Docker image downloaded successfully")
+            logger.info("log2timeline/plaso:20260119 Docker image downloaded successfully")
 
-        # NOTE: plaso:fixed image creation disabled - using volume mount fix in timesketch-worker instead
-        # The winevtx bug fix (PR #5023) is now applied via docker-compose volume mount:
-        # winevt_rc.py -> /usr/lib/python3/dist-packages/plaso/output/winevt_rc.py
-        # This is more maintainable than creating a custom Docker image.
+        # NOTE: Using static version 20260119 which includes winevtx bug fix (PR #5023)
 
         return True
 
