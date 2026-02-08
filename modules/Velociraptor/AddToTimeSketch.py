@@ -436,17 +436,34 @@ def make_sketches_public(api, logger):
             logger.info(f"Making sketch '{sketch.name}' (ID: {sketch.id}) public")
             # First attempt - use set_acl if available (newer API)
             sketch.set_acl(user_list=[], group_list=[], make_public=True)
+TIMESKETCH_LOCK_FILE = "/tmp/timesketch.lock"
+
 def start_timesketch(row, general_config, logger):
     # Redirect stderr to devnull to prevent Node.js maxBuffer overflow and false-failure detection
     # All meaningful output goes through the logger to log files
     import sys, os
     sys.stderr = open(os.devnull, "w")
 
+    # Simple lock file to prevent concurrent runs
+    if os.path.exists(TIMESKETCH_LOCK_FILE):
+        logger.error("Timesketch is already running (lock file exists)")
+        row["Status"] = "Failed"
+        row["Error"] = "Timesketch is already running. Please wait for the current run to complete."
+        return row
+
+    # Create lock file
+    try:
+        with open(TIMESKETCH_LOCK_FILE, 'w') as f:
+            f.write(str(os.getpid()))
+        logger.info("Timesketch lock acquired")
+    except Exception as e:
+        logger.error(f"Failed to create lock file: {e}")
+
     # Here, based on the parsed arguments, you can call different functions
     # For example:
     try:
         logger.info("WhoAmI:" + str(subprocess.run(['whoami'], stdout=subprocess.PIPE, text=True).stdout.strip()))
-        
+
         # Clean up any orphaned (stopped/exited) plaso containers from previous crashed runs
         # This prevents accumulation of dead containers and ensures is_plaso_running only detects active jobs
         logger.info("Cleaning up any orphaned plaso containers from previous runs...")
@@ -458,23 +475,15 @@ def start_timesketch(row, general_config, logger):
             'sudo docker ps -a -q --filter "ancestor=log2timeline/plaso:latest" --filter "status=exited" | xargs -r sudo docker rm -f',
             shell=True, capture_output=True, text=True
         )
-        
+
         if(is_plaso_running(logger)):
             logger.error("Timesketch plaso is already running. Let it finish and run again later")
             row["Status"] = "Failed"
             row["Error"] = "Timesketch plaso is already running. Let it finish and run again later"
             return row
 
-        # Clean plaso folder at the beginning of each run
-        user_name = subprocess.run(['whoami'], stdout=subprocess.PIPE, text=True).stdout.strip()
-        if user_name == "node":
-            plaso_cleanup_dir = "/plaso"
-        else:
-            plaso_cleanup_dir = "/home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso"
-        # DEBUG: Comment out plaso folder cleanup to allow debugging
-        # logger.info(f"Cleaning plaso folder before starting: {plaso_cleanup_dir}")
-        # additionals.funcs.run_subprocess(f"rm -rf {plaso_cleanup_dir}/*", "", logger)
-    
+        # Each run creates its own unique folder - no global cleanup needed
+
         logger.info("=" * 60)
         logger.info("TIMESKETCH PIPELINE STARTED")
         logger.info("=" * 60)
@@ -505,9 +514,13 @@ def start_timesketch(row, general_config, logger):
             logger.info("Running artifact")
             logger.info("TimeSketchPopulation:" + str(row["Population"]))
             for client in row["Population"]:
-                extract_dir = None  # Initialize for cleanup in exception handler
+                extract_dir = None  # Initialize for cleanup in finally handler
+                plaso_run_dir = None  # Initialize for cleanup - unique folder per run
+                api = None  # Initialize for cleanup in finally handler
                 try:
                     client_name = client["asset_string"]
+                    # Generate unique run timestamp at the start - used for all paths in this run
+                    run_timestamp = datetime.now().strftime("%d-%m-%Y-%H-%M-%S")
                     if(client_name in host_client_id_dict):
                         logger.info("Client name:" + client_name)
                         client_id = host_client_id_dict[client_name]
@@ -602,16 +615,26 @@ SELECT create_flow_download(
 
                         logger.info(f"[STEP 3/6] COMPLETE - ZIP file ready: {host_zip_path}")
 
-                        # Generate timestamp for log files
-                        log_datetime = datetime.now().strftime("%d-%m-%Y-%H-%M-%S")
+                        # Use the run_timestamp generated at the start of this client's processing
+                        log_datetime = run_timestamp
 
                         # Docker volume mounts always use HOST paths (even when running from inside a container)
                         # But file checks use the path as seen from THIS process
-                        plaso_host_dir = "/home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso"
+                        # Create unique folder per run to prevent concurrent run interference
+                        plaso_base_host_dir = "/home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso"
+                        plaso_run_folder = f"{client_name}_{run_timestamp}"
+                        plaso_host_dir = f"{plaso_base_host_dir}/{plaso_run_folder}"
                         if user_name == "node":
-                            plaso_dir = "/plaso"  # Container's view of the mounted volume
+                            plaso_dir = f"/plaso/{plaso_run_folder}"  # Container's view of the mounted volume
                         else:
                             plaso_dir = plaso_host_dir  # Running on host directly
+
+                        # Store the run directory for cleanup (use container path, not host path)
+                        plaso_run_dir = plaso_dir
+
+                        # Create the unique run folder (use container path since we're inside container)
+                        logger.info(f"Creating unique plaso run folder: {plaso_dir}")
+                        additionals.funcs.run_subprocess(f"sudo mkdir -p {plaso_dir}", "", logger)
 
                         # Get parsers from config
                         parsers = row["Arguments"].get("Parsers", "*")
@@ -627,7 +650,8 @@ SELECT create_flow_download(
                         # else:
                         #     parser_arg = "!winevtx"
                         parser_arg = parsers if parsers else "*"
-                        command1 = f"sudo docker run --rm -v {host_extract_dir}:{host_extract_dir}:ro -v {plaso_host_dir}/:/data --cpus='{cpus}' --memory='{ram}' --user root log2timeline/plaso:latest log2timeline --parsers '{parser_arg}' --workers {num_workers} --status_view window --status_view_interval 60 --logfile /data/log2timeline_{client_name}_{log_datetime}.log"
+                        # Use --temporary_directory to keep plaso temp files inside the run folder (prevents leftover tmp* dirs)
+                        command1 = f"sudo docker run --rm -v {host_extract_dir}:{host_extract_dir}:ro -v {plaso_host_dir}/:/data --cpus='{cpus}' --memory='{ram}' --user root log2timeline/plaso:latest log2timeline --parsers '{parser_arg}' --workers {num_workers} --temporary_directory /data --status_view window --status_view_interval 60 --logfile /data/log2timeline_{client_name}_{log_datetime}.log"
                         # Add storage file and source
                         # Note: Full plaso file is uploaded to Timesketch - use Timesketch queries for date filtering
                         command1 += f" --storage-file /data/{client_name}Artifacts.plaso {host_zip_path}"
@@ -643,9 +667,12 @@ SELECT create_flow_download(
                         api = connect_timesketch_api(general_config, logger)
                         logger.info("Preparing environment for plaso...")
 
-                        # Delete old plaso file to avoid "Output file already exists" error
-                        # Note: sudo rm runs on HOST, so use host path
-                        additionals.funcs.run_subprocess(f"sudo rm -f {plaso_host_dir}/{client_name}Artifacts.plaso", "", logger)
+                        # No need to delete old plaso file - each run has its own unique folder
+
+                        # Check if plaso is already running RIGHT BEFORE starting container
+                        # This minimizes race condition window
+                        if is_plaso_running(logger):
+                            raise Exception("Timesketch plaso is already running. Let it finish and run again later.")
 
                         logger.info("Running log2timeline (this may take a while)...")
                         logger.info(f"Full command: {command1}")
@@ -751,30 +778,37 @@ SELECT create_flow_download(
                         logger.info(f"Sketch ID: {row['UniqueID']['SketchID']}")
                         logger.info(f"Timeline ID: {row['UniqueID']['TimelineID']}")
 
-                        logger.info("-" * 40)
-                        logger.info("CLEANUP")
-                        logger.info("-" * 40)
-                        logger.info(f"Cleaning up extracted files: {extract_dir}")
-                        additionals.funcs.run_subprocess(f"sudo rm -rf {extract_dir}", "", logger)
-
-                        api.session.close()
                 except Exception as e:
                     logger.error("Mid run timesketch error:" + str(e))
                     logger.error(traceback.format_exc())
+                finally:
+                    # Cleanup always runs - success or fail
+                    logger.info("-" * 40)
+                    logger.info("CLEANUP (finally block)")
+                    logger.info("-" * 40)
                     # Cleanup extracted files if they exist
                     if extract_dir:
-                        logger.info(f"Cleaning up extracted files after error: {extract_dir}")
-                        #additionals.funcs.run_subprocess(f"sudo rm -rf {extract_dir}", "", logger)
-                    #make_sketches_public(api, logger)
-                    api.session.close()
+                        logger.info(f"Cleaning up extracted files: {extract_dir}")
+                        additionals.funcs.run_subprocess(f"sudo rm -rf {extract_dir}", "", logger)
+                    # Clean up only this run's plaso folder (not the entire plaso directory)
+                    if plaso_run_dir:
+                        logger.info(f"Cleaning up plaso run folder: {plaso_run_dir}")
+                        additionals.funcs.run_subprocess(f"sudo rm -rf {plaso_run_dir}", "", logger)
+                    # Close API session if it was opened
+                    if api:
+                        try:
+                            api.session.close()
+                        except:
+                            pass
 
             row["Status"] = "Complete"
             logger.info("=" * 60)
             logger.info("TIMESKETCH PIPELINE COMPLETED SUCCESSFULLY")
             logger.info("=" * 60)
-            # DEBUG: Comment out plaso folder cleanup to allow debugging
-            logger.info(f"Cleaning plaso folder: {plaso_cleanup_dir}")
-            additionals.funcs.run_subprocess(f"rm -rf {plaso_cleanup_dir}/*", "", logger)
+            # Remove lock file
+            if os.path.exists(TIMESKETCH_LOCK_FILE):
+                os.remove(TIMESKETCH_LOCK_FILE)
+                logger.info("Timesketch lock released")
             return row
     except Exception as e:
         logger.error("=" * 60)
@@ -784,12 +818,8 @@ SELECT create_flow_download(
         logger.error(traceback.format_exc())
         row["Status"] = "Failed"
         row["Error"] = "Unknown error:" + str(e)
-        # DEBUG: Comment out plaso folder cleanup to allow debugging
-        logger.info("Cleaning plaso folder...")
-        user_name = subprocess.run(['whoami'], stdout=subprocess.PIPE, text=True).stdout.strip()
-        if user_name == "node":
-            plaso_cleanup_dir = "/plaso"
-        else:
-            plaso_cleanup_dir = "/home/tenroot/setup_platform/workdir/risx-mssp/backend/plaso"
-        additionals.funcs.run_subprocess(f"rm -rf {plaso_cleanup_dir}/*", "", logger)
+        # Remove lock file even on error
+        if os.path.exists(TIMESKETCH_LOCK_FILE):
+            os.remove(TIMESKETCH_LOCK_FILE)
+            logger.info("Timesketch lock released (after error)")
         return row
