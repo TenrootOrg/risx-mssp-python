@@ -248,9 +248,9 @@ def run_artifact_on_client(channel, client_id, kape_collection, timeout, cpu_lim
             logger.info("Waiting 10 seconds to ensure all uploads are flushed...")
             time.sleep(10)
             return flow_id
-        if state == "FAILED":
-            logger.error("The flow has been failed!")
-            return
+        if state == "FAILED" or state == "ERROR":
+            logger.error(f"KAPE artifact collection failed! Flow state: {state}")
+            raise Exception(f"KAPE artifact collection failed with state: {state}")
 
         # Check if timeout reached
         if time.time() - start_time > timeout:
